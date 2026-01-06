@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { treasuryAdminService, financialService } from '../services/api';
+import { treasuryAdminService, financialService, movementService } from '../services/api';
 import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
@@ -193,6 +193,7 @@ const TreasuryAuditPage = () => {
   const [loading, setLoading] = useState(false);
   const [deposits, setDeposits] = useState([]);
   const [baseChanges, setBaseChanges] = useState([]);
+  const [movements, setMovements] = useState([]);
   const [openDepositId, setOpenDepositId] = useState(null);
   const [depositDetailsMap, setDepositDetailsMap] = useState({});
   const [loadingDetailsId, setLoadingDetailsId] = useState(null);
@@ -258,6 +259,9 @@ const TreasuryAuditPage = () => {
       if (tab === 'deposits') {
         const res = await treasuryAdminService.getDepositsAudit(params);
         setDeposits(res?.data || []);
+      } else if (tab === 'movements') {
+        const res = await movementService.list(params);
+        setMovements(res?.data || []);
       } else {
         const res = await treasuryAdminService.getBaseChanges(params);
         setBaseChanges(res?.data || []);
@@ -311,6 +315,21 @@ const TreasuryAuditPage = () => {
       // manejar por interceptor
     } finally {
       setUpdatingSiigoId(null);
+    }
+  };
+
+  const handleApproveMovement = async (id) => {
+    if (!window.confirm('¿Está seguro de aprobar este movimiento? Esto afectará el balance de cartera inmediatamente.')) return;
+    try {
+      setLoading(true);
+      await movementService.approve(id);
+      toast.success('Movimiento aprobado correctamente');
+      loadData();
+    } catch (e) {
+      console.error(e);
+      toast.error('Error al aprobar movimiento');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -399,6 +418,12 @@ const TreasuryAuditPage = () => {
             className={`${tab === 'base' ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
           >
             Cambios de Base
+          </button>
+          <button
+            onClick={() => setTab('movements')}
+            className={`${tab === 'movements' ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+          >
+            Ingresos Extra / Retiros
           </button>
         </nav>
       </div>
@@ -519,6 +544,76 @@ const TreasuryAuditPage = () => {
                   {deposits.length === 0 && (
                     <tr>
                       <td className="px-4 py-6 text-center text-sm text-gray-500" colSpan={10}>Sin registros</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : tab === 'movements' ? (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="text-lg font-semibold text-gray-900 flex items-center">
+              <Icons.ArrowUpDown className="w-5 h-5 mr-2 text-emerald-600" />
+              Auditoría de Movimientos (Ingresos/Retiros)
+            </h2>
+          </div>
+          <div className="card-content p-0">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tipo</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Pedido</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Notas</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {movements.map((m) => (
+                    <tr key={m.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-2 text-sm whitespace-nowrap">
+                        {m.created_at ? format(new Date(m.created_at), 'dd/MM/yyyy hh:mm a') : '-'}
+                      </td>
+                      <td className="px-4 py-2 text-sm">
+                        <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-medium uppercase ${m.type === 'extra_income' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'}`}>
+                          {m.type === 'extra_income' ? 'Ingreso Extra' : 'Retiro'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-right text-sm font-semibold">{fmt(m.amount)}</td>
+                      <td className="px-4 py-2 text-sm">
+                        {m.order_number ? (
+                          <a href={`/orders/${m.order_id}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                            {m.order_number}
+                          </a>
+                        ) : '-'}
+                      </td>
+                      <td className="px-4 py-2 text-sm">
+                        <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-medium uppercase ${m.approval_status === 'approved' ? 'bg-green-100 text-green-700' : m.approval_status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                          {m.approval_status === 'approved' ? 'Aprobado' : m.approval_status === 'rejected' ? 'Rechazado' : 'Pendiente'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-sm max-w-[200px] truncate" title={m.reason_text || m.notes}>{m.reason_text || m.notes || '-'}</td>
+                      <td className="px-4 py-2 text-right text-sm">
+                        {m.approval_status === 'pending' && useAuth().isAdmin() && (
+                          <button
+                            onClick={() => handleApproveMovement(m.id)}
+                            className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] items-center"
+                          >
+                            <Icons.Check className="w-3 h-3 inline mr-1" />
+                            Aprobar
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {movements.length === 0 && (
+                    <tr>
+                      <td className="px-4 py-6 text-center text-sm text-gray-500" colSpan={7}>Sin movimientos registrados</td>
                     </tr>
                   )}
                 </tbody>

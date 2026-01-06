@@ -76,23 +76,9 @@ const createMovement = async (req, res) => {
       if (rows.length) finalOrderId = rows[0].id;
     }
 
-    // Umbral de aprobación para retiros
-    let threshold = 200000;
-    try {
-      const cfg = await query(`SELECT config_value FROM system_config WHERE config_key = 'cartera_withdrawal_approval_threshold' LIMIT 1`);
-      if (cfg && cfg.length) threshold = Number(cfg[0].config_value || 200000) || 200000;
-    } catch (e) {}
-
-    let approval_status = 'approved';
-    let approved_by = null;
-    let approved_at = null;
-
-    if (t === 'withdrawal' && amt > threshold) {
-      approval_status = 'pending';
-    } else {
-      approved_by = userId;
-      approved_at = new Date();
-    }
+    const approval_status = 'approved';
+    const approved_by = userId;
+    const approved_at = new Date();
 
     const file = req.file || null;
     const evidenceFile = file ? file.filename : null;

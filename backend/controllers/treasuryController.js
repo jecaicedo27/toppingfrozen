@@ -224,7 +224,7 @@ const getCashBalance = async (req, res) => {
     const [extraIncomes] = await query(
       `SELECT COALESCE(SUM(amount),0) AS total
        FROM cartera_movements
-       WHERE type = 'extra_income' AND approval_status = 'approved' ${whereRangeMov.length ? ' AND ' + whereRangeMov.join(' AND ') : ''}`,
+       WHERE type = 'extra_income' ${whereRangeMov.length ? ' AND ' + whereRangeMov.join(' AND ') : ''}`,
       paramsMov
     );
 
@@ -232,7 +232,7 @@ const getCashBalance = async (req, res) => {
     const [withdrawals] = await query(
       `SELECT COALESCE(SUM(amount),0) AS total
        FROM cartera_movements
-       WHERE type = 'withdrawal' AND approval_status = 'approved' ${whereRangeMov.length ? ' AND ' + whereRangeMov.join(' AND ') : ''}`,
+       WHERE type = 'withdrawal' ${whereRangeMov.length ? ' AND ' + whereRangeMov.join(' AND ') : ''}`,
       paramsMov
     );
 
