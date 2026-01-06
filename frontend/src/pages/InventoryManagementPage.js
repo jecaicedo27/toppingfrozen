@@ -327,7 +327,7 @@ const InventoryManagementPage = () => {
             'MEL01': ['HELADO SUAVE'],
             'MEL02': ['HELADO YOGURT', 'YOGURT FROZEN'],
             'MEL03': ['HELADO PREMIUM'],
-            'MEL06': ['YOGURT SIN AZUCAR', 'YOGURT GRIEGO'],
+            'MEL06': ['YOGUR SIN AZUCAR', 'YOGURT GRIEGO'],
             'MEL07': ['SUAVE SIN AZUCAR']
         };
 
@@ -847,7 +847,7 @@ const InventoryManagementPage = () => {
                                 'HELADO PREMIUM',
                                 'HELADO YOGURT',
                                 'HELADO SUAVE',
-                                'YOGURT SIN AZUCAR',
+                                'YOGUR SIN AZUCAR',
                                 'SUAVE SIN AZUCAR'
                             ];
 
