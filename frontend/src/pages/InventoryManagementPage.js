@@ -69,7 +69,7 @@ const InventoryManagementPage = () => {
     const extractPresentation = (productName, productCode) => {
         // Lógica Especial: Productos MEL (leches) van en fila aparte "LECHE"
         // Lógica Especial: Productos MEL (leches) van en fila aparte "LECHE"
-        if ((productCode && String(productCode).toUpperCase().startsWith('MEL')) || String(productName || '').toUpperCase().includes('LECHE')) {
+        if (productCode && String(productCode).toUpperCase().startsWith('MEL')) {
             return 'LECHE (MEZCLA B)';
         }
 
