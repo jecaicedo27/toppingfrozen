@@ -682,6 +682,27 @@ const InventoryManagementPage = () => {
                                         <span className="text-[10px] text-gray-500">Und: <span className="font-bold text-gray-700">{totalStock}</span></span>
                                         <span className="text-[9px] text-gray-400 truncate">c/IVA: {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(totalCostNet * 1.19)}</span>
                                     </div>
+
+                                    {/* Desglose por Subgrupos (Optimized Compact Layout) */}
+                                    <div className="mt-3 pt-2 border-t border-gray-100 max-h-[120px] overflow-y-auto custom-scrollbar">
+                                        {Object.entries(subcatStats[cat] || {})
+                                            .sort(([, a], [, b]) => b.cost - a.cost)
+                                            .map(([subName, stats]) => (
+                                                <div key={subName} className="flex items-center justify-between text-[10px] py-1 border-b border-gray-50 last:border-0 hover:bg-gray-50 px-1">
+                                                    <div className="flex items-center gap-1.5 flex-1 overflow-hidden">
+                                                        <span className="text-gray-600 font-medium truncate" title={subName}>
+                                                            {subName.toLowerCase().replace(/^\w/, c => c.toUpperCase())}
+                                                        </span>
+                                                        <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded-full text-[8.5px] font-bold whitespace-nowrap">
+                                                            {stats.units} un
+                                                        </span>
+                                                    </div>
+                                                    <span className="font-bold text-gray-800 whitespace-nowrap ml-2">
+                                                        {new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(stats.cost)}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                    </div>
                                 </div>
                             );
                         });
