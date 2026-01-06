@@ -843,12 +843,17 @@ const InventoryManagementPage = () => {
                             if (!groupData) return null;
 
                             // Definir orden específico de subgrupos
+                            // Definir orden específico de subgrupos
                             const SUBGROUP_ORDER = [
-                                'HELADO PREMIUM',
+                                'GRANIZADOS',
                                 'HELADO YOGURT',
-                                'HELADO SUAVE',
                                 'YOGUR SIN AZUCAR',
-                                'SUAVE SIN AZUCAR'
+                                'HELADO SUAVE',
+                                'SUAVE SIN AZUCAR',
+                                'HELADO PREMIUM',
+                                'FRAPPE',
+                                'MEZCLAS',
+                                'MALTEADA'
                             ];
 
                             const subgroups = Object.keys(groupData).sort((a, b) => {
