@@ -1050,9 +1050,21 @@ class SiigoService {
         }
       } catch (_) {
         // Fallback conservador
-        normalizedPaymentMethod = ['efectivo', 'transferencia', 'tarjeta_credito', 'pago_electronico'].includes(normalizedPaymentMethod)
+        normalizedPaymentMethod = ['efectivo', 'transferencia', 'tarjeta_credito', 'pago_electronico', 'publicidad', 'reposicion'].includes(normalizedPaymentMethod)
           ? normalizedPaymentMethod
           : 'efectivo';
+      }
+
+      // Determinar estado inicial según reglas de negocio (igual que en orderController)
+      let initialStatus = 'pendiente_por_facturacion';
+
+      if (['publicidad', 'reposicion'].includes(normalizedPaymentMethod)) {
+        initialStatus = 'en_logistica';
+      } else if (deliveryMethod === 'recoge_bodega') {
+        // Si recoge en tienda, SIEMPRE pasa a cartera primero (incluso efectivo)
+        initialStatus = 'revision_cartera';
+      } else if (deliveryMethod === 'domicilio_ciudad' && normalizedPaymentMethod === 'efectivo') {
+        initialStatus = 'en_logistica';
       }
 
       const orderData = {
@@ -1069,12 +1081,12 @@ class SiigoService {
         customer_email: sanitizedCustomerEmail,
         customer_department: sanitizedCustomerDepartment,
         customer_country: sanitizedCustomerCountry,
-        customer_city: sanitizedCustomerCity,
+        customer_city: customerCity,
         total_amount: totalAmount,
-        net_value: netValue, // Nuevo campo
-        status: 'pendiente_por_facturacion',
+        net_value: netValue,
+        status: initialStatus,
         delivery_method: deliveryMethod,
-        sale_channel: saleChannel, // Nuevo campo
+        sale_channel: saleChannel,
         payment_method: normalizedPaymentMethod,
         created_by: await getSystemUserId(),
         created_at: new Date()
@@ -1087,45 +1099,44 @@ class SiigoService {
       // Insertar pedido con TODOS los campos disponibles incluyendo commercial_name, siigo_public_url, siigo_observations y shipping_payment_method
       let insertResult;
       try {
+        const dbFields = {
+          order_number: orderData.order_number,
+          invoice_code: orderData.invoice_code,
+          siigo_invoice_id: orderData.siigo_invoice_id,
+          customer_name: orderData.customer_name,
+          commercial_name: sanitizedCommercialName,
+          customer_phone: orderData.customer_phone,
+          customer_address: orderData.customer_address,
+          customer_identification: orderData.customer_identification,
+          customer_id_type: orderData.customer_id_type,
+          siigo_customer_id: orderData.siigo_customer_id,
+          customer_person_type: orderData.customer_person_type,
+          customer_email: orderData.customer_email,
+          customer_department: orderData.customer_department,
+          customer_country: orderData.customer_country,
+          customer_city: typeof orderData.customer_city === 'object' ? safeJSONStringify(orderData.customer_city) : orderData.customer_city,
+          total_amount: orderData.total_amount,
+          net_value: orderData.net_value,
+          status: orderData.status,
+          delivery_method: orderData.delivery_method,
+          sale_channel: orderData.sale_channel,
+          payment_method: orderData.payment_method,
+          shipping_payment_method: shippingPaymentMethod,
+          siigo_public_url: siigoPublicUrl,
+          siigo_observations: sanitizedSiigoObservations,
+          siigo_invoice_created_at: siigoInvoiceCreatedAt,
+          created_by: orderData.created_by,
+          created_at: orderData.created_at
+        };
+
+        const keys = Object.keys(dbFields);
+        const placeholders = keys.map(() => '?').join(', ');
+        const values = keys.map(k => dbFields[k] === undefined ? null : dbFields[k]);
+
         insertResult = await query(`
-          INSERT INTO orders (
-            order_number, invoice_code, siigo_invoice_id, customer_name, commercial_name,
-            customer_phone, customer_address, customer_identification,
-            customer_id_type, siigo_customer_id, customer_person_type,
-            customer_email, customer_department, customer_country, customer_city,
-            total_amount, net_value, status, delivery_method, sale_channel, payment_method, 
-            shipping_payment_method, siigo_public_url, siigo_observations, siigo_invoice_created_at, 
-            created_by, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [
-          orderData.order_number,
-          orderData.invoice_code,
-          orderData.siigo_invoice_id,
-          orderData.customer_name,
-          sanitizedCommercialName, // NUEVO CAMPO: commercial_name extraído correctamente
-          orderData.customer_phone,
-          orderData.customer_address,
-          orderData.customer_identification,
-          orderData.customer_id_type,
-          orderData.siigo_customer_id,
-          orderData.customer_person_type,
-          orderData.customer_email,
-          orderData.customer_department,
-          orderData.customer_country,
-          typeof orderData.customer_city === 'object' ? safeJSONStringify(orderData.customer_city) : orderData.customer_city,
-          orderData.total_amount,
-          orderData.net_value,
-          orderData.status,
-          orderData.delivery_method,
-          orderData.sale_channel,
-          orderData.payment_method,
-          shippingPaymentMethod, // CAMPO AUTOMÁTICO DESDE SIIGO
-          siigoPublicUrl,
-          sanitizedSiigoObservations,
-          siigoInvoiceCreatedAt,
-          orderData.created_by,
-          orderData.created_at
-        ]);
+          INSERT INTO orders (${keys.join(', ')}) 
+          VALUES (${placeholders})
+        `, values);
       } catch (insertError) {
         if (insertError.code === 'ER_DUP_ENTRY') {
           console.warn(`⚠️ Intento de duplicado para pedido ${orderData.order_number} (Race Condition)`);
@@ -1203,12 +1214,12 @@ class SiigoService {
             const conditions = [];
 
             if (productNames.length > 0) {
-              conditions.push('product_name IN (?)');
-              params.push(productNames);
+              conditions.push(`product_name IN (${productNames.map(() => '?').join(',')})`);
+              params.push(...productNames);
             }
             if (productCodes.length > 0) {
-              conditions.push('internal_code IN (?)');
-              params.push(productCodes);
+              conditions.push(`internal_code IN (${productCodes.map(() => '?').join(',')})`);
+              params.push(...productCodes);
             }
 
             querySQL += conditions.join(' OR ');
@@ -1457,10 +1468,10 @@ class SiigoService {
     }
   }
 
-  // Método para obtener todos los productos desde SIIGO
-  async getAllProducts(page = 1, pageSize = 100) {
+  // Método para obtener una página específica de productos (NO recursivo)
+  async getProductsPage(page = 1, pageSize = 100) {
     try {
-      console.log(`📦 Obteniendo productos de SIIGO (página ${page}, tamaño: ${pageSize})...`);
+      console.log(`📦 Obteniendo página ${page} de productos de SIIGO (tamaño: ${pageSize})...`);
 
       const headers = await this.getHeaders();
 
@@ -1471,29 +1482,41 @@ class SiigoService {
             page: page,
             page_size: pageSize
           },
-          timeout: 30000
+          timeout: 45000 // Aumentar timeout para productos que suelen demorar
         });
 
-        console.log(`✅ ${response.data.results?.length || 0} productos obtenidos`);
-        console.log(`📊 Total disponible: ${response.data.pagination?.total_results || 'N/A'}`);
+        const pagination = response.data.pagination || { total_results: 0, total_pages: 1 };
 
-        // Si hay más páginas, obtenerlas todas recursivamente
-        const products = response.data.results || [];
-
-        if (response.data.pagination && response.data.pagination.total_pages > page) {
-          console.log(`📄 Obteniendo página ${page + 1} de ${response.data.pagination.total_pages}...`);
-          const nextPageProducts = await this.getAllProducts(page + 1, pageSize);
-          return products.concat(nextPageProducts);
+        // CORRECCIÓN: Siigo a veces no devuelve total_pages, lo calculamos
+        if (!pagination.total_pages && pagination.total_results) {
+          pagination.total_pages = Math.ceil(pagination.total_results / pageSize);
         }
 
-        return products;
+        return {
+          results: response.data.results || [],
+          pagination: pagination
+        };
       });
-
     } catch (error) {
-      console.error('❌ Error obteniendo productos de SIIGO:', error.message);
-      if (error.response) {
-        console.error('Respuesta del error:', error.response.data);
+      console.error(`❌ Error obteniendo página ${page} de productos:`, error.message);
+      throw error;
+    }
+  }
+
+  // Método para obtener todos los productos desde SIIGO (Recursivo usando getProductsPage)
+  async getAllProducts(page = 1, pageSize = 100) {
+    try {
+      const { results, pagination } = await this.getProductsPage(page, pageSize);
+      let products = results;
+
+      if (pagination.total_pages > page) {
+        console.log(`📄 Avanzando a página ${page + 1} de ${pagination.total_pages}...`);
+        const nextPageProducts = await this.getAllProducts(page + 1, pageSize);
+        products = products.concat(nextPageProducts);
       }
+
+      return products;
+    } catch (error) {
       throw error;
     }
   }

@@ -452,13 +452,22 @@ const createOrder = async (req, res) => {
 
     // Determinar estado inicial según reglas de negocio
     let initialStatus = 'pendiente_facturacion';
+    console.log(`🔍 createOrder - deliveryMethod: "${deliveryMethod}", paymentMethod: "${paymentMethod}"`);
+
     if (['publicidad', 'reposicion'].includes(paymentMethod)) {
       initialStatus = 'en_logistica';
-    } else if (deliveryMethod === 'recogida_tienda' && paymentMethod !== 'efectivo') {
-      initialStatus = 'revision_cartera'; // Requiere verificación de pago
+      console.log('📦 createOrder - Publicidad/Reposición -> en_logistica');
+    } else if (deliveryMethod === 'recoge_bodega') {
+      // CAMBIO: Si recoge en tienda, SIEMPRE pasa a cartera primero (incluso efectivo)
+      // para recibir el pago antes de entregar/empaquetar.
+      // User Request: "estando en el rol de facturador... debe pasar a cartera para pagar"
+      initialStatus = 'revision_cartera';
+      console.log('💰 createOrder - Recoge en Bodega -> revision_cartera');
     } else if (deliveryMethod === 'domicilio_ciudad' && paymentMethod === 'efectivo') {
-      initialStatus = 'en_logistica'; // Pasa directo a logística
+      initialStatus = 'en_logistica'; // Pasa directo a logística (pago contraentrega)
+      console.log('🏍️ createOrder - Domicilio + Efectivo -> en_logistica (contraentrega)');
     }
+    console.log(`✅ createOrder - initialStatus final: "${initialStatus}"`);
 
     // Normalizar valores persistidos de pago y envío (asegura 'cliente_credito' -> 'credito')
     const normalizedPaymentMethod = normalizePaymentMethod(paymentMethod || 'efectivo');
@@ -820,8 +829,35 @@ const updateOrder = async (req, res) => {
         console.log('🔄 Pedido enviado automáticamente a empaque para verificación');
       }
 
+      // NUEVO FLUJO: Facturador -> Cartera (Pago Efectivo Bodega) -> Empaque
+      // Si el pedido se intenta mover a 'pendiente_empaque' o 'en_logistica'
+      // Y es Recogida en Tienda + Efectivo + NO ha pasado por cartera (podríamos chequear log, pero mejor forzar estado)
+      // Forzamos 'revision_cartera' para que Cartera registre el pago.
+      const targetStatus = updateData.status;
+      if (
+        ['pendiente_empaque', 'en_logistica', 'en_preparacion'].includes(targetStatus) &&
+        (updateData.delivery_method === 'recoge_bodega' || order.delivery_method === 'recoge_bodega') &&
+        (updateData.payment_method === 'efectivo' || order.payment_method === 'efectivo')
+      ) {
+        // Verificar si ya tiene el pago registrado (si cartera ya lo procesó, debería tener flag pago)
+        // O si el estado destino NO es revision_cartera.
+        // Asumimos que si va a Empaque es porque Facturador lo envió.
+        // Si NO tiene pago registrado (requires_payment=1 y payment_received=0), desviar.
+        // Nota: requires_payment se calcula al crear.
+        // Simplemente forzamos status si no viene de Cartera? 
+        // Mejor: si status es 'pendiente_empaque' y es efectivo/bodega -> 'revision_cartera'.
+        // Salvo que Cartera mismo lo esté moviendo (el userRole check ayudaría, pero Cartera también usa este endpoint?)
+
+        // Si lo hace el Facturador (o Admin/Logistica), lo desviamos.
+        // Si lo hace Cartera, se supone que ya recibió el dinero?
+        if (userRole === 'facturador' || userRole === 'admin') {
+          console.log('🔄 Desviando pedido Efectivo/Bodega a Cartera para cobro (antes de Empaque)');
+          updateData.status = 'revision_cartera';
+        }
+      }
+
       // Registrar en caja si es recogida en tienda + efectivo + va a logística
-      if (updateData.delivery_method === 'recogida_tienda' &&
+      if (updateData.delivery_method === 'recoge_bodega' &&
         updateData.payment_method === 'efectivo' &&
         updateData.status === 'en_logistica') {
 
@@ -2867,7 +2903,8 @@ const deleteAllOrders = async (req, res) => {
       'logistics_records',
       'siigo_sync_log',
       'whatsapp_notifications',
-      'cash_closing_details'
+      'cash_closing_details',
+      'cartera_deposit_details'
     ];
 
     await transaction(async (connection) => {

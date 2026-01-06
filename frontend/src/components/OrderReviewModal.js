@@ -130,7 +130,7 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
         console.error('Error cargando métodos de envío:', error);
         // Fallback actualizado con datos reales de la BD
         setDeliveryMethods([
-          { value: 'recogida_tienda', label: 'Recoge en Bodega' },
+          { value: 'recoge_bodega', label: 'Recoge en Bodega' },
           { value: 'domicilio', label: 'Domicilio' },
           { value: 'envio_nacional', label: 'Nacional' },
           { value: 'mensajeria_urbana', label: 'Mensajeria urbana' },
@@ -223,10 +223,44 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
       return;
     }
 
-    // Si es efectivo + domicilio/mensajería local o recoge en bodega => enviar a Logística
-    if (formData.payment_method === 'efectivo' && (isPickupDelivery(formData.delivery_method) || isLocalDelivery(formData.delivery_method))) {
+    // Si es efectivo + recoge en bodega => enviar a CARTERA (reciben el pago físicamente)
+    if (formData.payment_method === 'efectivo' && isPickupDelivery(formData.delivery_method)) {
       if (!formData.delivery_method) {
-        toast.error('Para Efectivo debe seleccionar un método de envío para enviarlo a Logística');
+        toast.error('Para Efectivo + Recoge en Bodega debe seleccionar el método de envío');
+        return;
+      }
+      if (!formData.shipping_date) {
+        toast.error('Debe seleccionar una fecha de envío');
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const dataToSend = {
+          orderId: order.id,
+          payment_method: formData.payment_method,
+          delivery_method: formData.delivery_method,
+          shipping_date: formData.shipping_date,
+          notes: formData.notes,
+          action: 'send_to_wallet'
+        };
+
+        await onConfirm(dataToSend);
+        onClose();
+        toast.success('Pedido enviado a Cartera. Cartera recibirá el pago en efectivo al entregar el pedido.');
+      } catch (error) {
+        console.error('Error enviando efectivo+bodega a cartera:', error);
+        toast.error('Error enviando pedido a cartera');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // Si es efectivo + domicilio/mensajería local => enviar a Logística (mensajero recibe el pago)
+    if (formData.payment_method === 'efectivo' && isLocalDelivery(formData.delivery_method)) {
+      if (!formData.delivery_method) {
+        toast.error('Para Efectivo debe seleccionar un método de envío');
         return;
       }
       if (!formData.shipping_date) {
@@ -453,6 +487,18 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
     try {
       // REGLAS DE NEGOCIO AUTOMÁTICAS
       const pmNorm = normalizePaymentMethod(formData.payment_method);
+      const devNorm = String(formData.delivery_method || '').toLowerCase();
+      const isPickup = isPickupDelivery(devNorm);
+      const isLocal = isLocalDelivery(devNorm);
+
+      console.log('🔄 Procesando pedido:', {
+        orderId: order.id,
+        payment: pmNorm,
+        delivery: devNorm,
+        isPickup,
+        isLocal
+      });
+
       let actionType = '';
       let successMessage = '';
 
@@ -466,10 +512,16 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
         // Pedido de servicio => directo a Cartera
         actionType = 'send_to_wallet';
         successMessage = 'Pedido de servicio enviado a Cartera para validación.';
-      } else if (pmNorm === 'efectivo' && (isPickupDelivery(formData.delivery_method) || isLocalDelivery(formData.delivery_method))) {
-        // Efectivo + Recoge en Bodega ó Domicilio/Mensajería local => Logística/Mensajero cobra y luego concilia con Cartera
+      } else if (pmNorm === 'efectivo' && isPickup) {
+        // Efectivo + Recoge en Bodega => CARTERA recibe el pago PRIMERO
+        actionType = 'send_to_wallet';
+        successMessage = 'Pedido enviado a Cartera para recibir el pago en efectivo. Después pasará a Logística.';
+        console.log('💰 Ruta: Efectivo + Pickup -> a Cartera');
+      } else if (pmNorm === 'efectivo' && isLocal) {
+        // Efectivo + Domicilio/Mensajería local => Logística (mensajero cobra y cuadra con Cartera)
         actionType = 'send_to_logistics';
         successMessage = 'Pedido con pago en efectivo enviado a Logística. El mensajero recibe el dinero y lo entrega a Cartera.';
+        console.log('🏍️ Ruta: Efectivo + Local -> a Logística');
       } else if (pmNorm === 'transferencia' || pmNorm === 'pago_electronico' || pmNorm === 'credito') {
         // Transferencia, electrónicos o crédito => Cartera valida primero
         actionType = 'send_to_wallet';
@@ -497,13 +549,7 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
 
       await onConfirm(dataToSend);
       onClose();
-      toast.success(
-        formData.payment_method === 'contraentrega'
-          ? 'Pedido contraentrega enviado a Logística. El mensajero recibe el dinero y lo entrega a Cartera.'
-          : actionType === 'send_to_logistics'
-            ? 'Pedido enviado a Logística. Logística recibirá el dinero y luego lo cuadrará con Cartera.'
-            : successMessage
-      );
+      toast.success(successMessage);
     } catch (error) {
       console.error('Error procesando pedido:', error);
       toast.error('Error procesando el pedido');
@@ -532,11 +578,16 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
       return null;
     }
 
+    const pmNorm = normalizePaymentMethod(formData.payment_method);
+    const devNorm = String(formData.delivery_method || '').toLowerCase();
+    const isPickup = isPickupDelivery(devNorm);
+    const isLocal = isLocalDelivery(devNorm);
+
     // Recomendación basada en reglas de negocio actualizadas
-    if (formData.payment_method === 'contraentrega' || ['publicidad', 'reposicion'].includes(formData.payment_method)) {
+    if (pmNorm === 'contraentrega' || ['publicidad', 'reposicion'].includes(pmNorm)) {
       return {
         action: 'logistics',
-        reason: formData.payment_method === 'contraentrega'
+        reason: pmNorm === 'contraentrega'
           ? 'Pago contraentrega: pasa directo a Logística. El mensajero recibe el dinero y lo entrega a Cartera.'
           : 'Pedido de Publicidad/Reposición: pasa directo a Logística, no requiere validación de Cartera.'
       };
@@ -545,15 +596,20 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
         action: 'wallet',
         reason: 'Pedido de servicio: pasa a Cartera para validación (sin logística).'
       };
-    } else if (formData.payment_method === 'efectivo' && (isPickupDelivery(formData.delivery_method) || isLocalDelivery(formData.delivery_method))) {
+    } else if (pmNorm === 'efectivo' && isPickup) {
+      return {
+        action: 'wallet',
+        reason: 'Pago en efectivo + Recoge en Bodega: enviar a Cartera primero para recibir el dinero físicamente.'
+      };
+    } else if (pmNorm === 'efectivo' && isLocal) {
       return {
         action: 'logistics',
         reason: 'Pago en efectivo + domicilio/mensajería local: enviar a Logística. El mensajero recibe el dinero y lo cuadra con Cartera.'
       };
-    } else if (formData.payment_method === 'transferencia' || formData.payment_method === 'pago_electronico') {
+    } else if (['transferencia', 'pago_electronico', 'credito'].includes(pmNorm)) {
       return {
         action: 'wallet',
-        reason: 'Transferencia - DEBE ir a Cartera primero para verificar que el dinero esté en el banco'
+        reason: `${getPaymentMethodLabel(pmNorm)}: DEBE ir a Cartera primero para validación.`
       };
     } else {
       return {

@@ -1,4 +1,5 @@
 const mysql = require('mysql2/promise');
+console.log('🚀 DATABASE.JS LOADED - VERSION: POOL_QUERY_DEBUG');
 const path = require('path');
 // Cargar variables de entorno desde backend/.env por defecto
 const dotenvPath = process.env.BACKEND_ENV_PATH || path.resolve(__dirname, '../.env');
@@ -38,14 +39,12 @@ const query = async (sql, params = []) => {
   try {
     // SHOW/DESCRIBE/EXPLAIN no funcionan bien con prepared statements en MariaDB.
     // Usar pool.query (no preparado) para estas sentencias.
-    if (/^\s*(SHOW|DESCRIBE|EXPLAIN)\b/i.test(sql)) {
-      const [results] = await pool.query(sql); // no usar params aquí
-      return results;
-    }
-    const [results] = await pool.execute(sql, params);
+    const [results] = await pool.query(sql, params);
     return results;
   } catch (error) {
-    console.error('Error ejecutando query:', error);
+    console.error('❌ Error ejecutando query SQL:', sql);
+    console.error('📊 Número de parámetros:', params ? params.length : 0);
+    console.error('📝 Error details:', error);
     throw error;
   }
 };
