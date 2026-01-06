@@ -158,6 +158,13 @@ const InventoryManagementPage = () => {
         if (normalized.includes('PET')) return 'PET';
         if (normalized.includes('PP') && !normalized.includes('TOPF')) return 'PP'; // Evitar TOPF si es marca
 
+        // Regla específica para yogurt griego/natural con alulosa
+        if (normalized.includes('YOGURT') && normalized.includes('ALULOSA')) {
+            if (normalized.includes('GRIEGO')) return 'GRIEGO CON ALULOSA';
+            if (normalized.includes('NATURAL')) return 'NATURAL CON ALULOSA';
+            return 'YOGURT ALULOSA';
+        }
+
         // Regla específica para LECHE: Separar por tipo antes de agrupar por ALULOSA
         if (normalized.includes('LECHE')) {
             let tipo = '';
