@@ -199,6 +199,11 @@ const InventoryManagementPage = () => {
             return 'VAINILLA';
         }
 
+        // Regla explícita para diferenciar GEL de CHAMOY (en gr) de Salsas (en ml)
+        if (normalized.includes('GEL') && normalized.includes('CHAMOY')) {
+            return 'GEL CHAMOY';
+        }
+
         const commonFlavors = [
             'BLUEBERRY', 'CAFE', 'CEREZA', 'CHAMOY', 'CHICLE', 'COCO', 'FRESA',
             'ICE PINK', 'LYCHE', 'MANGO BICHE CON SAL', 'MANGO BICHE', 'MANZANA VERDE',
