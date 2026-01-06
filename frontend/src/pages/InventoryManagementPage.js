@@ -889,7 +889,15 @@ const InventoryManagementPage = () => {
                                         // Obtener todos los sabores/variantes únicos de este subgrupo para las columnas
                                         const allFlavors = [...new Set(
                                             Object.values(subgroupData).flatMap(pres => Object.keys(pres))
-                                        )].sort();
+                                        )].sort((a, b) => {
+                                            // Lógica para enviar la columna de LECHE al final
+                                            const isMilkA = String(a).startsWith('LECHE (MEL');
+                                            const isMilkB = String(b).startsWith('LECHE (MEL');
+
+                                            if (isMilkA && !isMilkB) return 1;
+                                            if (!isMilkA && isMilkB) return -1;
+                                            return a.localeCompare(b);
+                                        });
 
                                         return (
                                             <div key={subgroup} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-8">
