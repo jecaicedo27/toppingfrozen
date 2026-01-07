@@ -1,13 +1,27 @@
 import React, { useEffect, useState } from 'react';
 import * as Icons from 'lucide-react';
 
+const getImageUrl = (url) => {
+  if (!url) return '';
+  if (url.startsWith('http')) return url;
+
+  if (url.includes('delivery_evidence')) {
+    const parts = url.split('/');
+    const filename = parts[parts.length - 1];
+    return `/api/public/evidence/${filename}/content`;
+  }
+
+  if (url.startsWith('/uploads')) return `/api${url}`;
+  return url;
+};
+
 const openImage = (url) => {
   try {
-    const full = url.startsWith('http') ? url : `${window.location.origin}${url}`;
+    const formattedUrl = getImageUrl(url);
+    const full = formattedUrl.startsWith('http') ? formattedUrl : `${window.location.origin}${formattedUrl}`;
     window.open(full, '_blank', 'noopener');
   } catch (e) {
-    // fallback
-    window.open(url, '_blank');
+    window.open(getImageUrl(url), '_blank');
   }
 };
 
@@ -72,7 +86,7 @@ const EventItem = ({ event, onPreview }) => (
             className="relative border rounded overflow-hidden hover:shadow focus:outline-none"
           >
             <img
-              src={att.url}
+              src={getImageUrl(att.url)}
               alt={att.label || 'adjunto'}
               className="w-24 h-24 object-cover"
               onError={(e) => {
@@ -285,7 +299,7 @@ const OrderTimelineModal = ({ isOpen, onClose, order }) => {
                   <div className="grid grid-cols-3 gap-2">
                     {attachments.map((att, idx) => (
                       <button key={idx} onClick={() => handlePreviewAttachment(att)} className="relative border rounded overflow-hidden hover:shadow focus:outline-none" title={att.label || 'Ver imagen'}>
-                        <img src={att.url} alt={att.label || 'adjunto'} className="w-full h-20 object-cover" onError={(e) => { e.currentTarget.style.opacity = 0.4; }} />
+                        <img src={getImageUrl(att.url)} alt={att.label || 'adjunto'} className="w-full h-20 object-cover" onError={(e) => { e.currentTarget.style.opacity = 0.4; }} />
                         <span className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-[10px] text-white px-1 py-0.5 truncate">
                           {att.source || ''}
                         </span>
@@ -304,7 +318,6 @@ const OrderTimelineModal = ({ isOpen, onClose, order }) => {
         {/* Modal de previsualización de adjunto */}
         {preview && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black bg-opacity-80" onClick={(e) => {
-            // Close if clicking outside the content
             if (e.target === e.currentTarget) setPreview(null);
           }}>
             {/* Navigation Buttons (Left) */}
@@ -343,7 +356,7 @@ const OrderTimelineModal = ({ isOpen, onClose, order }) => {
               </div>
               <div className="p-0 overflow-auto flex items-center justify-center bg-gray-100 min-h-[200px] relative" style={{ cursor: isZoomed ? 'zoom-out' : 'zoom-in' }} onClick={() => setIsZoomed(!isZoomed)}>
                 <img
-                  src={preview.url}
+                  src={getImageUrl(preview.url)}
                   alt={preview.label || 'adjunto'}
                   className={`w-auto max-w-none transition-all duration-200 ${isZoomed ? '' : 'max-h-[85vh]'}`}
                   style={{ minWidth: isZoomed ? 'auto' : 'min(100%, 400px)', width: isZoomed ? 'auto' : 'auto' }}

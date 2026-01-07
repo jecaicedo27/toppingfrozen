@@ -1,6 +1,7 @@
 
 const { query } = require('../config/database');
 const path = require('path');
+const fs = require('fs');
 const PackagingLock = require('../services/packagingLockService');
 
 // Helper: emitir evento de cambio de estado para notificaciones en tiempo real
@@ -1891,6 +1892,38 @@ const listEvidenceGallery = async (req, res) => {
   }
 };
 
+const streamEvidenceFile = async (req, res) => {
+  try {
+    const { filename } = req.params;
+
+    // Security check: prevent directory traversal
+    if (filename.includes('..') || filename.includes('/')) {
+      return res.status(400).send('Invalid filename');
+    }
+
+    const filePath = path.join(__dirname, '..', 'uploads', 'delivery_evidence', filename);
+    console.log(`📂 Streaming evidence: ${filename} -> ${filePath}`);
+
+    // Check if file exists using fs.access
+    fs.access(filePath, fs.constants.F_OK, (err) => {
+      if (err) {
+        console.error(`❌ Evidence file not found: ${filePath}`);
+        return res.status(404).json({
+          success: false,
+          message: 'File not found'
+        });
+      }
+
+      // Stream file
+      res.sendFile(filePath);
+    });
+
+  } catch (error) {
+    console.error('❌ Error streaming evidence file:', error);
+    res.status(500).send('Internal Server Error');
+  }
+};
+
 module.exports = {
   getPendingOrders,
   startPackaging,
@@ -1916,5 +1949,6 @@ module.exports = {
   unlockPackagingAdmin,
   getPackagingLockStatus,
   // Solo lectura
-  getPackagingSnapshot
+  getPackagingSnapshot,
+  streamEvidenceFile
 };

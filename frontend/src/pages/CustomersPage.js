@@ -132,7 +132,7 @@ const CustomersPage = () => {
     try {
       setFullSyncLoading(true);
       const token = authService.getToken();
-      const maxPages = 300; // ajustar si se requiere
+      const maxPages = 100; // Limitado a 100 páginas (~5,000 clientes) para evitar saturación
       const response = await fetch(`/api/customers/full-sync?max_pages=${maxPages}&async=true`, {
         method: 'POST',
         headers: {
@@ -143,8 +143,9 @@ const CustomersPage = () => {
       const data = await response.json();
       if (response.ok && data.success) {
         setUpdateResult(data);
-        toast.success(`Sincronización completa: procesados ${data.data.processed}, nuevos ${data.data.created}`);
-        await loadCustomerStats();
+        toast.success(
+          `Sincronización iniciada en segundo plano. Los clientes se importarán automáticamente.`
+        ); await loadCustomerStats();
         await loadCustomers();
       } else {
         toast.error(data.message || 'Error en sincronización completa');

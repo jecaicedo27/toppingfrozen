@@ -5,36 +5,36 @@ const { query } = require('../config/database');
 const authenticateToken = async (req, res, next) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '') || req.query.token;
-    
+
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Token de acceso requerido' 
+      return res.status(401).json({
+        success: false,
+        message: 'Token de acceso requerido'
       });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
+
     // Verificar que el usuario existe y está activo
     // Compatibilidad: userId (nuevo) o id (anterior)
     const userId = decoded.userId || decoded.id;
-    
+
     if (!userId) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Token inválido: ID de usuario no encontrado' 
+      return res.status(401).json({
+        success: false,
+        message: 'Token inválido: ID de usuario no encontrado'
       });
     }
-    
+
     const users = await query(
       'SELECT id, username, email, role, created_at, updated_at FROM users WHERE id = ?',
       [userId]
     );
 
     if (!users.length) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Token inválido o usuario no encontrado' 
+      return res.status(401).json({
+        success: false,
+        message: 'Token inválido o usuario no encontrado'
       });
     }
 
@@ -121,9 +121,9 @@ const authenticateToken = async (req, res, next) => {
     next();
   } catch (error) {
     console.error('Error verificando token:', error);
-    return res.status(401).json({ 
-      success: false, 
-      message: 'Token inválido' 
+    return res.status(401).json({
+      success: false,
+      message: 'Token inválido'
     });
   }
 };
@@ -135,11 +135,14 @@ const verifyToken = authenticateToken;
 const verifyRole = (allowedRoles) => {
   return (req, res, next) => {
     if (!req.user) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Usuario no autenticado' 
+      return res.status(401).json({
+        success: false,
+        message: 'Usuario no autenticado'
       });
     }
+
+    // DEBUG: Log roles being checked
+    console.log(`🛡️ VerifyRole: Checking user=${req.user.username} role=${req.user.role} advanced=[${req.user.roles?.map(r => r.role_name)}] against allowed=[${allowedRoles}]`);
 
     // Soportar sistema avanzado: permitir si alguno de sus roles activos está en allowedRoles
     if (Array.isArray(req.user.roles) && req.user.roles.length > 0) {
@@ -149,9 +152,10 @@ const verifyRole = (allowedRoles) => {
     }
 
     if (!allowedRoles.includes(req.user.role)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'No tienes permisos para realizar esta acción' 
+      console.log(`⛔ VerifyRole: Access Denied for user=${req.user.username}`);
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permisos para realizar esta acción'
       });
     }
 
@@ -166,9 +170,9 @@ const verifyAdmin = verifyRole(['admin']);
 const requirePermission = (permission) => {
   return (req, res, next) => {
     if (!req.user) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Usuario no autenticado' 
+      return res.status(401).json({
+        success: false,
+        message: 'Usuario no autenticado'
       });
     }
 
@@ -198,7 +202,7 @@ const requirePermission = (permission) => {
       // Acceso explícito para módulo de empaque: aceptar variantes y sinónimos
       if (permission === 'packaging') {
         // Permitir también a cartera ver recursos de empaque (galería de evidencias)
-        const packagingRoles = new Set(['admin','logistica','logistics','empaque','empacador','packaging','packaging_team','cartera']);
+        const packagingRoles = new Set(['admin', 'logistica', 'logistics', 'empaque', 'empacador', 'packaging', 'packaging_team', 'cartera', 'facturador']);
         return roleNames.some(r => packagingRoles.has(r));
       }
       // Compatibilidad genérica anterior (también acepta inglés y sin acentos)
@@ -221,9 +225,9 @@ const requirePermission = (permission) => {
     }
 
     // 3) Si no pasa ninguna, denegar
-    return res.status(403).json({ 
-      success: false, 
-      message: `No tienes el permiso requerido: ${permission}` 
+    return res.status(403).json({
+      success: false,
+      message: `No tienes el permiso requerido: ${permission}`
     });
   };
 };
@@ -232,9 +236,9 @@ const requirePermission = (permission) => {
 const requireAnyPermission = (permissions) => {
   return (req, res, next) => {
     if (!req.user) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Usuario no autenticado' 
+      return res.status(401).json({
+        success: false,
+        message: 'Usuario no autenticado'
       });
     }
 
@@ -244,14 +248,14 @@ const requireAnyPermission = (permissions) => {
     }
 
     // Verificar si el usuario tiene al menos uno de los permisos
-    const hasAnyPermission = permissions.some(permission => 
+    const hasAnyPermission = permissions.some(permission =>
       req.user.permissions.some(p => p.permission_name === permission)
     );
 
     if (!hasAnyPermission) {
-      return res.status(403).json({ 
-        success: false, 
-        message: `No tienes ninguno de los permisos requeridos: ${permissions.join(', ')}` 
+      return res.status(403).json({
+        success: false,
+        message: `No tienes ninguno de los permisos requeridos: ${permissions.join(', ')}`
       });
     }
 
@@ -263,9 +267,9 @@ const requireAnyPermission = (permissions) => {
 const requireRole = (role) => {
   return (req, res, next) => {
     if (!req.user) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Usuario no autenticado' 
+      return res.status(401).json({
+        success: false,
+        message: 'Usuario no autenticado'
       });
     }
 
@@ -278,9 +282,9 @@ const requireRole = (role) => {
     const hasRole = req.user.roles.some(r => r.role_name === role);
 
     if (!hasRole) {
-      return res.status(403).json({ 
-        success: false, 
-        message: `Se requiere el rol: ${role}` 
+      return res.status(403).json({
+        success: false,
+        message: `Se requiere el rol: ${role}`
       });
     }
 
@@ -303,12 +307,12 @@ module.exports = {
   // Autenticación básica
   authenticateToken,
   verifyToken,
-  
+
   // Verificación de roles (sistema anterior)
   verifyRole,
   verifyAdmin,
   verifyRoles,
-  
+
   // Nuevo sistema de roles y permisos
   requirePermission,
   requireAnyPermission,

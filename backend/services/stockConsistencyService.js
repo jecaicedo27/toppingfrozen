@@ -50,6 +50,38 @@ class StockConsistencyService {
       connectionLimit: 5,
       queueLimit: 0
     });
+
+    this.queue = new Set();
+  }
+
+  enqueue(id) {
+    this.queue.add(JSON.stringify({ type: 'id', value: id }));
+  }
+
+  enqueueByCode(code) {
+    this.queue.add(JSON.stringify({ type: 'code', value: code }));
+  }
+
+  enqueueBySiigoId(siigoId) {
+    this.queue.add(JSON.stringify({ type: 'siigo', value: siigoId }));
+  }
+
+  start() {
+    if (this.running) return true;
+    this.running = true;
+
+    // Iniciar procesamiento de cola cada 30s
+    this.queueTimer = setInterval(() => this.processQueue(), 30000);
+
+    console.log('✅ StockConsistencyService iniciado correctmente');
+    return true;
+  }
+
+  stop() {
+    this.running = false;
+    if (this.queueTimer) clearInterval(this.queueTimer);
+    if (this.scanRecentTimer) clearInterval(this.scanRecentTimer);
+    if (this.scanOldestTimer) clearInterval(this.scanOldestTimer);
   }
 
   async getConn() {

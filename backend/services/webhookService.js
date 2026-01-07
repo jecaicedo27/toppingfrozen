@@ -15,17 +15,17 @@ class WebhookService {
             charset: 'utf8mb4',
             timezone: '+00:00'
         };
-        
+
         this.siigoConfig = {
             baseUrl: 'https://api.siigo.com',
             username: process.env.SIIGO_USERNAME,
             access_key: process.env.SIIGO_ACCESS_KEY,
             partner_id: process.env.SIIGO_PARTNER_ID
         };
-        
+
         this.token = null;
         this.tokenExpiry = null;
-        
+
         // URL base para recibir webhooks
         this.webhookBaseUrl = process.env.WEBHOOK_BASE_URL || 'http://localhost:5000/api/webhooks';
     }
@@ -33,11 +33,11 @@ class WebhookService {
     async authenticate() {
         try {
             console.log('🔐 Autenticando con SIIGO API para webhooks...');
-            
+
             const token = await siigoService.authenticate();
             this.token = `Bearer ${token}`;
             this.tokenExpiry = Date.now() + (55 * 60 * 1000); // 55 minutos
-            
+
             console.log('✅ Autenticación exitosa para webhooks');
             return true;
         } catch (error) {
@@ -59,14 +59,14 @@ class WebhookService {
 
     async subscribeToWebhook(topic) {
         const connection = await this.getConnection();
-        
+
         try {
             if (!await this.ensureValidToken()) {
                 throw new Error('No se pudo autenticar con SIIGO');
             }
 
             const subscriptionData = {
-                application_id: 'GestionPedidos',
+                application_id: 'GestionToppingFrozen',
                 topic: topic,
                 url: `${this.webhookBaseUrl}/receive`
             };
@@ -123,7 +123,7 @@ class WebhookService {
     async setupStockWebhooks() {
         try {
             console.log('🚀 Configurando webhooks de stock...');
-            
+
             // Validar URL del webhook (SIIGO requiere URL pública HTTPS)
             if (!this.webhookBaseUrl || !/^https:\/\/.+/i.test(this.webhookBaseUrl)) {
                 console.warn(`⚠️ URL de webhook no segura o inválida (${this.webhookBaseUrl}). Salteando suscripciones. Configure WEBHOOK_BASE_URL con HTTPS público.`);
@@ -142,7 +142,7 @@ class WebhookService {
                 try {
                     const subscription = await this.subscribeToWebhook(topic);
                     subscriptions.push(subscription);
-                    
+
                     // Pausa adaptativa tras suscripción para evitar 429
                     const baseDelay = Math.min(Math.max(siigoService.rateLimitDelay || 1000, 1000), 5000);
                     const jitter = Math.floor(Math.random() * 500);
@@ -166,7 +166,7 @@ class WebhookService {
     async setupCustomerWebhooks() {
         try {
             console.log('🚀 Configurando webhooks de clientes...');
-            
+
             if (!this.webhookBaseUrl || !/^https:\/\/.+/i.test(this.webhookBaseUrl)) {
                 console.warn(`⚠️ URL de webhook no segura o inválida (${this.webhookBaseUrl}). Salteando suscripciones de clientes. Configure WEBHOOK_BASE_URL con HTTPS público.`);
                 return [];
@@ -205,7 +205,7 @@ class WebhookService {
 
     async processWebhookPayload(payload) {
         const connection = await this.getConnection();
-        
+
         try {
             console.log(`📥 Procesando webhook: ${payload.topic}`);
 
@@ -563,14 +563,14 @@ class WebhookService {
 
     async getWebhookSubscriptions() {
         const connection = await this.getConnection();
-        
+
         try {
             const [subscriptions] = await connection.execute(`
                 SELECT * FROM webhook_subscriptions 
                 WHERE active = true 
                 ORDER BY created_at DESC
             `);
-            
+
             return subscriptions;
         } finally {
             await connection.end();
@@ -579,14 +579,14 @@ class WebhookService {
 
     async getWebhookLogs(limit = 100) {
         const connection = await this.getConnection();
-        
+
         try {
             const [logs] = await connection.execute(`
                 SELECT * FROM webhook_logs 
                 ORDER BY created_at DESC 
                 LIMIT ?
             `, [limit]);
-            
+
             return logs;
         } finally {
             await connection.end();

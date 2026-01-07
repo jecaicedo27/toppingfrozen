@@ -8,6 +8,7 @@ const MultiplePaymentEvidenceUpload = ({ orderId, onUploadComplete, onEvidencesC
     const [uploading, setUploading] = useState(false);
     const [existingEvidences, setExistingEvidences] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [previewImage, setPreviewImage] = useState(null);
 
     // Cargar comprobantes existentes
     React.useEffect(() => {
@@ -172,10 +173,10 @@ const MultiplePaymentEvidenceUpload = ({ orderId, onUploadComplete, onEvidencesC
         }
 
         try {
-            const response = await fetch(`/ api / wallet / payment - evidences / ${evidenceId} `, {
+            const response = await fetch(`/api/wallet/payment-evidences/${evidenceId}`, {
                 method: 'DELETE',
                 headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('token')} `
+                    'Authorization': `Bearer ${localStorage.getItem('token')}`
                 }
             });
 
@@ -228,13 +229,14 @@ const MultiplePaymentEvidenceUpload = ({ orderId, onUploadComplete, onEvidencesC
                             {selectedFiles.map((item, index) => (
                                 <div
                                     key={item.id}
-                                    className="relative group border rounded-lg overflow-hidden bg-gray-50"
+                                    className="relative group border rounded-lg overflow-hidden bg-gray-50 shadow-sm"
                                 >
                                     {item.type === 'image' && item.preview ? (
                                         <img
                                             src={item.preview}
                                             alt={item.file.name}
-                                            className="w-full h-32 object-cover"
+                                            className="w-full h-32 object-cover cursor-pointer"
+                                            onClick={() => setPreviewImage(item.preview)}
                                         />
                                     ) : (
                                         <div className="w-full h-32 flex flex-col items-center justify-center text-gray-400">
@@ -246,8 +248,11 @@ const MultiplePaymentEvidenceUpload = ({ orderId, onUploadComplete, onEvidencesC
                                     )}
 
                                     <button
-                                        onClick={() => removeSelectedFile(index)}
-                                        className="absolute top-1 right-1 bg-red-600 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            removeSelectedFile(index);
+                                        }}
+                                        className="absolute top-1 right-1 bg-red-600 text-white p-1 rounded-full shadow-md hover:bg-red-700 transition-colors z-10"
                                         title="Eliminar"
                                     >
                                         <Icons.X className="h-4 w-4" />
@@ -255,7 +260,7 @@ const MultiplePaymentEvidenceUpload = ({ orderId, onUploadComplete, onEvidencesC
 
                                     {/* Overlay con nombre para imágenes */}
                                     {item.type === 'image' && (
-                                        <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs p-1 truncate">
+                                        <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-[10px] p-1 truncate">
                                             {item.file.name}
                                         </div>
                                     )}
@@ -266,7 +271,7 @@ const MultiplePaymentEvidenceUpload = ({ orderId, onUploadComplete, onEvidencesC
                         <button
                             onClick={handleUpload}
                             disabled={uploading}
-                            className="w-full bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                            className="w-full bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center font-medium transition-colors"
                         >
                             {uploading ? (
                                 <>
@@ -298,36 +303,31 @@ const MultiplePaymentEvidenceUpload = ({ orderId, onUploadComplete, onEvidencesC
                         {existingEvidences.map((evidence) => (
                             <div
                                 key={evidence.id}
-                                className="relative group border rounded-lg overflow-hidden"
+                                className="relative group border rounded-lg overflow-hidden shadow-sm"
                             >
                                 <img
                                     src={`/${evidence.file_path}`}
                                     alt="Comprobante"
-                                    className="w-full h-32 object-cover"
+                                    className="w-full h-32 object-cover cursor-pointer"
+                                    onClick={() => setPreviewImage(`/${evidence.file_path}`)}
                                 />
-                                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition-opacity flex items-center justify-center">
-                                    <div className="opacity-0 group-hover:opacity-100 flex space-x-2">
-                                        <a
-                                            href={`/${evidence.file_path}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="bg-white text-gray-900 p-2 rounded-full hover:bg-gray-100"
-                                        >
-                                            <Icons.Eye className="h-4 w-4" />
-                                        </a>
-                                        <button
-                                            onClick={() => handleDelete(evidence.id)}
-                                            className="bg-red-600 text-white p-2 rounded-full hover:bg-red-700"
-                                        >
-                                            <Icons.Trash2 className="h-4 w-4" />
-                                        </button>
-                                    </div>
-                                </div>
-                                <div className="p-2 bg-gray-50">
-                                    <p className="text-xs text-gray-600 truncate">
+
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDelete(evidence.id);
+                                    }}
+                                    className="absolute top-1 right-1 bg-red-600 text-white p-1.5 rounded-full shadow-lg hover:bg-red-700 transition-all z-10"
+                                    title="Eliminar permanentemente"
+                                >
+                                    <Icons.Trash2 className="h-3.5 w-3.5" />
+                                </button>
+
+                                <div className="p-2 bg-gray-50 border-t">
+                                    <p className="text-[10px] text-gray-600 truncate font-medium">
                                         {evidence.uploaded_by_name || 'Usuario'}
                                     </p>
-                                    <p className="text-xs text-gray-500">
+                                    <p className="text-[10px] text-gray-500">
                                         {new Date(evidence.uploaded_at).toLocaleDateString('es-CO')}
                                     </p>
                                 </div>
@@ -338,6 +338,41 @@ const MultiplePaymentEvidenceUpload = ({ orderId, onUploadComplete, onEvidencesC
             ) : (
                 <div className="text-center py-4 text-gray-500 text-sm">
                     No hay comprobantes subidos aún
+                </div>
+            )}
+
+            {/* Modal de Vista Previa */}
+            {previewImage && (
+                <div
+                    className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-80 p-4 transition-opacity"
+                    onClick={() => setPreviewImage(null)}
+                >
+                    <div className="relative max-w-4xl max-h-full">
+                        <button
+                            onClick={() => setPreviewImage(null)}
+                            className="absolute -top-10 -right-2 text-white hover:text-gray-300 transition-colors"
+                        >
+                            <Icons.X className="h-8 w-8" />
+                        </button>
+                        <img
+                            src={previewImage}
+                            alt="Vista previa"
+                            className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain"
+                            onClick={(e) => e.stopPropagation()}
+                        />
+                        <div className="mt-4 text-center">
+                            <a
+                                href={previewImage}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center text-white bg-white bg-opacity-20 hover:bg-opacity-30 px-4 py-2 rounded-full text-sm transition-all"
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                <Icons.Download className="h-4 w-4 mr-2" />
+                                Abrir en pestaña nueva
+                            </a>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>

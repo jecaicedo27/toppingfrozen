@@ -645,6 +645,19 @@ const acceptCashRegister = async (req, res) => {
       [approverId || null, id]
     );
 
+    // AVANCE LOGÍSTICO: Si el pedido está en 'revision_cartera', moverlo a 'en_logistica'
+    if (cr.order_id) {
+      const orderRows = await query('SELECT id, status, order_number FROM orders WHERE id = ?', [cr.order_id]);
+      if (orderRows.length && orderRows[0].status === 'revision_cartera') {
+        await query(
+          `UPDATE orders SET status = 'en_logistica', updated_at = NOW() WHERE id = ?`,
+          [cr.order_id]
+        );
+        console.log(`✅ Pago aceptado para pedido ${orderRows[0].order_number} - Movido a en_logistica`);
+        emitStatusChange(orderRows[0].id, orderRows[0].order_number, 'revision_cartera', 'en_logistica');
+      }
+    }
+
     return res.json({ success: true, message: 'Pago en bodega aceptado', data: { id } });
   } catch (error) {
     console.error('Error aceptando registro de caja:', error);

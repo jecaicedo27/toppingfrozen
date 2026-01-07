@@ -2444,13 +2444,25 @@ const OrdersPage = () => {
                               <Icons.Store className="w-5 h-5" />
                             </button>
                           ) : (
-                            <button
-                              onClick={() => setWalletModal({ isOpen: true, order })}
-                              className="p-2 text-green-600 bg-green-50 rounded-full active:bg-green-100"
-                              title="Validar pago"
-                            >
-                              <Icons.CreditCard className="w-5 h-5" />
-                            </button>
+                            // Efectivo + Recoge en Bodega: usa PickupPaymentModal (sin imagen)
+                            // Otros (transferencias, etc.): usa WalletValidationModal (con comprobante)
+                            (order.payment_method === 'efectivo' && order.delivery_method === 'recoge_bodega') ? (
+                              <button
+                                onClick={() => handleReceivePickupPayment(order)}
+                                className="p-2 text-green-600 bg-green-50 rounded-full active:bg-green-100"
+                                title="Recibir pago en efectivo"
+                              >
+                                <Icons.DollarSign className="w-5 h-5" />
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => setWalletModal({ isOpen: true, order })}
+                                className="p-2 text-green-600 bg-green-50 rounded-full active:bg-green-100"
+                                title="Validar pago"
+                              >
+                                <Icons.CreditCard className="w-5 h-5" />
+                              </button>
+                            )
                           )
                         )}
 
@@ -2991,13 +3003,24 @@ const OrdersPage = () => {
                               <Icons.Store className="w-4 h-4" />
                             </button>
                           ) : (
-                            <button
-                              onClick={() => setWalletModal({ isOpen: true, order })}
-                              className="text-green-600 hover:text-green-900 w-4 h-4 flex items-center justify-center"
-                              title="Validar pago"
-                            >
-                              <Icons.CreditCard className="w-4 h-4" />
-                            </button>
+                            // Desktop: Efectivo + Bodega -> PickupPaymentModal, otros -> WalletValidationModal
+                            (order.payment_method === 'efectivo' && order.delivery_method === 'recoge_bodega') ? (
+                              <button
+                                onClick={() => handleReceivePickupPayment(order)}
+                                className="text-green-600 hover:text-green-900 w-4 h-4 flex items-center justify-center"
+                                title="Recibir pago en efectivo"
+                              >
+                                <Icons.DollarSign className="w-4 h-4" />
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => setWalletModal({ isOpen: true, order })}
+                                className="text-green-600 hover:text-green-900 w-4 h-4 flex items-center justify-center"
+                                title="Validar pago"
+                              >
+                                <Icons.CreditCard className="w-4 h-4" />
+                              </button>
+                            )
                           )
                         ) : (['admin', 'cartera', 'logistica'].includes(user?.role) && (order.is_pending_payment_evidence)) ? (
                           <button
@@ -3671,7 +3694,7 @@ const OrdersPage = () => {
                     <option value="transferencia">Transferencia</option>
                     <option value="credito">Cliente a Crédito</option>
                     <option value="pago_electronico">Pago Electrónico</option>
-                    <option value="contraentrega">Contraentrega (Solo Medellín)</option>
+                    <option value="contraentrega">Contraentrega (Solo Bogotá)</option>
                     <option value="mercadopago">MercadoPago</option>
                     <option value="publicidad">Publicidad (sin validación)</option>
                     <option value="reposicion">Reposición (sin validación)</option>

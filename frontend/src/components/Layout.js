@@ -22,7 +22,8 @@ import {
   Package2,
   QrCode,
   TrendingUp,
-  MessageSquare
+  MessageSquare,
+  Book
 } from 'lucide-react';
 import NotificationSystem from './NotificationSystem';
 import RoleNavigation from './RoleNavigation';
@@ -157,7 +158,7 @@ const Layout = () => {
       href: '/inventory-management',
       icon: Database,
       current: location.pathname === '/inventory-management',
-      requiresPermission: ['admin', 'facturador', 'cartera'],
+      requiresPermission: ['admin', 'facturador', 'cartera', 'logistica'],
     },
     {
       name: 'Recepción Mercancía',
@@ -192,6 +193,12 @@ const Layout = () => {
       icon: CreditCard,
       current: location.pathname === '/expenses',
       requiresPermission: ['admin', 'cartera'],
+    },
+    {
+      name: 'Manual de Usuario',
+      href: '/manual',
+      icon: Book,
+      current: location.pathname === '/manual',
     },
   ];
 

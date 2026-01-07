@@ -230,6 +230,17 @@ const CashierCollectionsPage = () => {
     return { expected, declared, diff: declared - expected };
   }, [pending]);
 
+  // Agrupar pendientes por mensajero/bodega
+  const groupedPending = useMemo(() => {
+    const groups = {};
+    pending.forEach(row => {
+      const groupName = row.messenger_name || (row.messenger_id ? `ID ${row.messenger_id}` : 'Bodega');
+      if (!groups[groupName]) groups[groupName] = [];
+      groups[groupName].push(row);
+    });
+    return groups;
+  }, [pending]);
+
   // Totales de cruce para consignación
   const depositAssignedTotal = useMemo(() => {
     return Object.values(depositDetails || {}).reduce((acc, v) => acc + Number(v || 0), 0);
@@ -283,6 +294,20 @@ const CashierCollectionsPage = () => {
       window.open(url, '_blank', 'noopener,noreferrer');
     } catch (e) {
       toast.error('No se pudo abrir el recibo para imprimir');
+    }
+  };
+
+  const handlePrintGroup = (rows) => {
+    try {
+      const token = localStorage.getItem('token');
+      const base = api?.defaults?.baseURL || (process.env.REACT_APP_API_URL || 'http://localhost:3001/api');
+
+      const ids = rows.map(r => r.source === 'messenger_adhoc' ? `adhoc-${r.adhoc_id}` : r.order_id).join(',');
+      const url = `${base}/cartera/pending/receipt-group?ids=${encodeURIComponent(ids)}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      toast.error('No se pudo abrir el reporte grupal');
     }
   };
 
@@ -560,97 +585,122 @@ const CashierCollectionsPage = () => {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {pending.map((row) => (
-                    <tr key={row.order_id} className="hover:bg-gray-50">
-                      <td className="px-2 py-1">
-                        <div className="text-sm font-medium text-gray-900">{row.order_number}</div>
-                        <div className="text-xs text-gray-500">{new Date(row.delivered_at).toLocaleString('es-CO')}</div>
-                        <div className="text-xs text-gray-400">{row.invoice_date ? new Date(row.invoice_date).toLocaleDateString('es-CO') : '-'}</div>
-                      </td>
-                      <td className="px-2 py-1">
-                        <div className="text-xs sm:text-sm text-gray-900 whitespace-normal break-words">{row.customer_name}</div>
-                      </td>
-                      <td className="px-2 py-1 hidden md:table-cell">
-                        <div className="text-xs sm:text-sm text-gray-900 whitespace-normal break-words">{row.messenger_name || `ID ${row.messenger_id}`}</div>
-                      </td>
-                      <td className="px-2 py-1">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getPaymentBadgeClass(row.payment_method)}`}>
-                          {getPaymentMethodLabel(row.payment_method)}
-                        </span>
-                      </td>
-                      <td className="px-2 py-1 hidden lg:table-cell">
-                        <div className="text-xs sm:text-sm text-gray-900">
-                          {row.source === 'bodega'
-                            ? `${row.registered_by_name || '-'}` + (row.registered_by_role ? ` (${row.registered_by_role})` : '')
-                            : '-'}
-                        </div>
-                      </td>
-                      <td className="px-2 py-1 text-right text-xs sm:text-sm">
-                        <div>
-                          <span className="text-gray-500">Esperado:</span>{' '}
-                          <span className="font-semibold">
-                            {fmt(String(row.payment_method || '').toLowerCase() === 'reposicion' ? 0 : row.expected_amount)}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">Declarado:</span>{' '}
-                          <span>
-                            {fmt(String(row.payment_method || '').toLowerCase() === 'reposicion' ? 0 : row.declared_amount)}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-2 py-1 text-right">
-                        <div className="flex items-center justify-end space-x-2">
-                          {String(row.payment_method || '').toLowerCase() === 'reposicion' ? (
-                            <span
-                              className="px-2 py-1 text-xs rounded bg-gray-100 text-gray-600"
-                              title="Reposición — no cobrable por mensajero"
-                            >
-                              No cobrable
+                  {Object.entries(groupedPending).map(([groupName, rows]) => (
+                    <React.Fragment key={groupName}>
+                      <tr className="bg-gray-100/50">
+                        <td colSpan={7} className="px-4 py-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-bold text-gray-700 flex items-center">
+                              <Icons.User className="w-4 h-4 mr-2 text-gray-500" />
+                              {groupName}
+                              <span className="ml-2 px-2 py-0.5 text-[10px] bg-gray-200 text-gray-600 rounded-full">
+                                {rows.length} facturas
+                              </span>
                             </span>
-                          ) : row.source === 'bodega_eligible' ? (
                             <button
-                              onClick={() => handleRegisterPayment(row)}
-                              className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded inline-flex items-center"
-                              title="Registrar pago en bodega (Cartera)"
+                              onClick={() => handlePrintGroup(rows)}
+                              className="px-3 py-1 bg-white border border-gray-300 text-gray-700 text-xs font-medium rounded hover:bg-gray-50 flex items-center gap-1 shadow-sm"
+                              title="Imprimir consolidado del grupo para firma"
                             >
-                              <Icons.Check className="w-3 h-3" />
-                              <span className="ml-1 hidden sm:inline">Registrar Pago</span>
+                              <Icons.Printer className="w-3 h-3" />
+                              Imprimir Grupo
                             </button>
-                          ) : (
-                            <>
-                              <button
-                                onClick={() => handlePrintReceipt(row)}
-                                className="px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs rounded inline-flex items-center"
-                                title="Imprimir recibo por factura"
-                              >
-                                <Icons.Printer className="w-3 h-3" />
-                                <span className="ml-1 hidden sm:inline">Imprimir</span>
-                              </button>
-                              <button
-                                onClick={() => handleAcceptCash(row)}
-                                className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded inline-flex items-center"
-                                title="Aceptar efectivo"
-                              >
-                                <Icons.Check className="w-3 h-3" />
-                                <span className="ml-1 hidden sm:inline">Aceptar</span>
-                              </button>
-                            </>
-                          )}
-                          {row.closing_id ? (
-                            <a
-                              className="text-blue-600 hover:text-blue-800 text-xs underline"
-                              href={`/api/cartera/handovers/${row.closing_id}/receipt`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              title="Ver recibo del acta"
-                            >
-                              Recibo
-                            </a>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
+                          </div>
+                        </td>
+                      </tr>
+                      {rows.map((row) => (
+                        <tr key={row.source + (row.order_id || row.adhoc_id)} className="hover:bg-gray-50">
+                          <td className="px-2 py-1">
+                            <div className="text-sm font-medium text-gray-900">{row.order_number}</div>
+                            <div className="text-xs text-gray-500">{new Date(row.delivered_at).toLocaleString('es-CO')}</div>
+                            <div className="text-xs text-gray-400">{row.invoice_date ? new Date(row.invoice_date).toLocaleDateString('es-CO') : '-'}</div>
+                          </td>
+                          <td className="px-2 py-1">
+                            <div className="text-xs sm:text-sm text-gray-900 whitespace-normal break-words">{row.customer_name}</div>
+                          </td>
+                          <td className="px-2 py-1 hidden md:table-cell">
+                            <div className="text-xs sm:text-sm text-gray-900 whitespace-normal break-words">{row.messenger_name || `ID ${row.messenger_id}`}</div>
+                          </td>
+                          <td className="px-2 py-1">
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getPaymentBadgeClass(row.payment_method)}`}>
+                              {getPaymentMethodLabel(row.payment_method)}
+                            </span>
+                          </td>
+                          <td className="px-2 py-1 hidden lg:table-cell">
+                            <div className="text-xs sm:text-sm text-gray-900">
+                              {row.source === 'bodega'
+                                ? `${row.registered_by_name || '-'}` + (row.registered_by_role ? ` (${row.registered_by_role})` : '')
+                                : '-'}
+                            </div>
+                          </td>
+                          <td className="px-2 py-1 text-right text-xs sm:text-sm">
+                            <div>
+                              <span className="text-gray-500">Esperado:</span>{' '}
+                              <span className="font-semibold">
+                                {fmt(String(row.payment_method || '').toLowerCase() === 'reposicion' ? 0 : row.expected_amount)}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Declarado:</span>{' '}
+                              <span>
+                                {fmt(String(row.payment_method || '').toLowerCase() === 'reposicion' ? 0 : row.declared_amount)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-2 py-1 text-right">
+                            <div className="flex items-center justify-end space-x-2">
+                              {String(row.payment_method || '').toLowerCase() === 'reposicion' ? (
+                                <span
+                                  className="px-2 py-1 text-xs rounded bg-gray-100 text-gray-600"
+                                  title="Reposición — no cobrable por mensajero"
+                                >
+                                  No cobrable
+                                </span>
+                              ) : row.source === 'bodega_eligible' ? (
+                                <button
+                                  onClick={() => handleRegisterPayment(row)}
+                                  className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded inline-flex items-center"
+                                  title="Registrar pago en bodega (Cartera)"
+                                >
+                                  <Icons.Check className="w-3 h-3" />
+                                  <span className="ml-1 hidden sm:inline">Registrar Pago</span>
+                                </button>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => handlePrintReceipt(row)}
+                                    className="px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs rounded inline-flex items-center"
+                                    title="Imprimir recibo por factura"
+                                  >
+                                    <Icons.Printer className="w-3 h-3" />
+                                    <span className="ml-1 hidden sm:inline">Imprimir</span>
+                                  </button>
+                                  <button
+                                    onClick={() => handleAcceptCash(row)}
+                                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded inline-flex items-center"
+                                    title="Aceptar efectivo"
+                                  >
+                                    <Icons.Check className="w-3 h-3" />
+                                    <span className="ml-1 hidden sm:inline">Aceptar</span>
+                                  </button>
+                                </>
+                              )}
+                              {row.closing_id ? (
+                                <a
+                                  className="text-blue-600 hover:text-blue-800 text-xs underline"
+                                  href={`/api/cartera/handovers/${row.closing_id}/receipt`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title="Ver recibo del acta"
+                                >
+                                  Recibo
+                                </a>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
                   ))}
                   {pending.length === 0 && (
                     <tr>

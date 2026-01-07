@@ -20,6 +20,19 @@ class CompleteProductImportService {
     this.tempBarcodeCount = 0;
     this.realBarcodeCount = 0;
     this.categoriesCreated = new Set();
+    this.isProcessing = false;
+  }
+
+  // Ayudante para emitir progreso vía WebSockets
+  emitProgress(status, progress, detail = {}) {
+    if (global.io) {
+      global.io.to('siigo-updates').emit('product-sync-progress', {
+        status,
+        progress,
+        detail,
+        timestamp: new Date()
+      });
+    }
   }
 
   // Función para generar códigos de barras temporales únicos
@@ -118,6 +131,13 @@ class CompleteProductImportService {
     const startTime = Date.now();
 
     try {
+      this.isProcessing = true;
+      this.importedCount = 0;
+      this.tempBarcodeCount = 0;
+      this.realBarcodeCount = 0;
+
+      this.emitProgress('starting', 0, { message: 'Iniciando conexión con SIIGO...' });
+
       console.log('🔗 Conectado a la base de datos');
       console.log('🔐 Autenticando con SIIGO...');
 
@@ -128,30 +148,55 @@ class CompleteProductImportService {
       let hasMorePages = true;
 
       while (hasMorePages) {
+        this.emitProgress('fetching', Math.min(5 + (currentPage * 2), 40), {
+          message: `Consultando productos en SIIGO (Página ${currentPage})...`,
+          page: currentPage
+        });
+
         console.log(`📄 Consultando página ${currentPage}...`);
 
-        try {
-          const products = await siigoService.getAllProducts(currentPage);
+        let retries = 0;
+        let success = false;
 
-          if (!products || products.length === 0) {
-            hasMorePages = false;
-            break;
+        while (retries < 3 && !success) {
+          try {
+            // Usar el nuevo método no recursivo
+            const response = await siigoService.getProductsPage(currentPage);
+            const products = response.results;
+            const pagination = response.pagination;
+
+            if (!products || products.length === 0) {
+              hasMorePages = false;
+              success = true;
+              break;
+            }
+
+            console.log(`   ➤ Productos en página ${currentPage}: ${products.length}`);
+            allProducts.push(...products);
+
+            // Control de paginación usando metadatos reales de SIIGO
+            if (pagination.total_pages > currentPage) {
+              currentPage++;
+              // Pausa breve para no saturar
+              await new Promise(resolve => setTimeout(resolve, 500));
+            } else {
+              hasMorePages = false;
+            }
+            success = true;
+
+          } catch (pageError) {
+            retries++;
+            console.error(`⚠️ Error obteniendo página ${currentPage} (Intento ${retries}/3):`, pageError.message);
+
+            if (retries >= 3) {
+              console.error(`❌ Fallo definitivo en página ${currentPage}. Abortando resto de la importación.`);
+              hasMorePages = false; // Solo abortar tras 3 fallos consecutivos
+            } else {
+              const waitTime = 2000 * retries;
+              console.log(`⏳ Esperando ${waitTime}ms antes de reintentar...`);
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+            }
           }
-
-          console.log(`   ➤ Productos en página ${currentPage}: ${products.length}`);
-          allProducts.push(...products);
-
-          // Control de paginación - SIIGO normalmente devuelve 100 por página
-          if (products.length < 100) {
-            hasMorePages = false;
-          } else {
-            currentPage++;
-            // Rate limiting - pausa entre páginas
-            await new Promise(resolve => setTimeout(resolve, 500));
-          }
-        } catch (pageError) {
-          console.error(`❌ Error en página ${currentPage}:`, pageError.message);
-          hasMorePages = false;
         }
       }
 
@@ -168,6 +213,10 @@ class CompleteProductImportService {
       // await this.clearExistingProducts();
 
       console.log('💾 Insertando TODOS los productos en la base de datos...');
+      this.emitProgress('processing', 45, {
+        message: 'Procesando productos e insertando en base de datos local...',
+        total_to_process: allProducts.length
+      });
 
       // Crear conjunto de categorías
       const categoriesSet = new Set();
@@ -247,10 +296,25 @@ class CompleteProductImportService {
 
           // Insertar producto en la base de datos (con manejo de duplicado de barcode)
           // Verificar si el producto ya existe por siigo_id
-          const [existingProduct] = await pool.execute(
-            'SELECT id, barcode FROM products WHERE siigo_id = ?',
+          let [existingProduct] = await pool.execute(
+            'SELECT id, barcode, internal_code, siigo_id FROM products WHERE siigo_id = ?',
             [siigoId]
           );
+
+          // LOGICA ESPEJO (MIRROR SYNC):
+          // Si no lo encontramos por UUID, intentamos buscarlo por CÓDIGO INTERNO para recuperar el enlace
+          if (existingProduct.length === 0 && internalCode) {
+            const [foundByCode] = await pool.execute(
+              'SELECT id, barcode, internal_code, siigo_id FROM products WHERE internal_code = ? LIMIT 1',
+              [internalCode]
+            );
+
+            if (foundByCode.length > 0) {
+              console.log(`🔗 RE-ENLACE DETECTADO: El producto ${internalCode} cambió de UUID en Siigo.`);
+              console.log(`   Viejo UUID: ${foundByCode[0].siigo_id} -> Nuevo UUID: ${siigoId}`);
+              existingProduct = foundByCode; // Usamos el registro encontrado para actualizarlo
+            }
+          }
 
           if (existingProduct.length > 0) {
             // ACTUALIZAR producto existente
@@ -267,7 +331,6 @@ class CompleteProductImportService {
                 product_name = ?, 
                 barcode = ?, 
                 internal_code = ?, 
-                category = ?, 
                 description = ?,
                 standard_price = ?, 
                 siigo_product_id = ?, 
@@ -281,7 +344,6 @@ class CompleteProductImportService {
                 productName,
                 barcodeToUpdate,
                 internalCode,
-                category,
                 description,
                 standardPrice,
                 internalCode,
@@ -294,6 +356,9 @@ class CompleteProductImportService {
             // console.log(`🔄 Producto actualizado: ${internalCode}`);
           } else {
             // INSERTAR nuevo producto
+            // Usamos 'SIN CLASIFICAR' para la categoría ya que ahora es personalizada
+            const defaultCategory = 'SIN CLASIFICAR';
+
             try {
               await pool.execute(
                 `INSERT INTO products (
@@ -305,7 +370,7 @@ class CompleteProductImportService {
                   productName,
                   barcode,
                   internalCode,
-                  category,
+                  defaultCategory,
                   description,
                   standardPrice,
                   internalCode,
@@ -331,7 +396,7 @@ class CompleteProductImportService {
                     productName,
                     barcode,
                     internalCode,
-                    category,
+                    defaultCategory,
                     description,
                     standardPrice,
                     internalCode,
@@ -343,7 +408,6 @@ class CompleteProductImportService {
                 );
                 this.tempBarcodeCount++;
                 barcodeType = 'temp';
-              } else {
                 throw insertErr;
               }
             }
@@ -353,6 +417,12 @@ class CompleteProductImportService {
 
           // Rate limiting cada 50 productos
           if (i % 50 === 0 && i > 0) {
+            const currentProgress = 45 + Math.round((i / allProducts.length) * 50);
+            this.emitProgress('processing', currentProgress, {
+              message: `Procesando productos (${i}/${allProducts.length})...`,
+              processed: i,
+              total: allProducts.length
+            });
             await new Promise(resolve => setTimeout(resolve, 100));
           }
         } catch (productError) {
@@ -385,9 +455,13 @@ class CompleteProductImportService {
       console.log(`📂 Categorías creadas: ${categoriesSet.size}`);
       console.log('🎉 IMPORTACIÓN COMPLETA EXITOSA');
 
+      this.emitProgress('completed', 100, result);
+      this.isProcessing = false;
       return result;
     } catch (error) {
       console.error('❌ Error en importación completa:', error);
+      this.emitProgress('error', 0, { message: error.message });
+      this.isProcessing = false;
       return {
         success: false,
         message: 'Error en la importación completa de productos',

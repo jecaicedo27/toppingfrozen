@@ -13,7 +13,7 @@
 module.exports = {
   apps: [
     {
-      name: 'perlas-backend',
+      name: 'toppingfrozen',
       cwd: './backend',
       script: 'server.js',
       instances: 1,              // Cambia a 'max' o un número >1 si deseas cluster
@@ -22,17 +22,17 @@ module.exports = {
       max_memory_restart: '400M',
       env: {
         NODE_ENV: 'production',
-        PORT: 3001,
+        PORT: 3003,
         TZ: 'America/Bogota'
       },
       env_production: {
         NODE_ENV: 'production',
-        PORT: 3001,
+        PORT: 3003,
         TZ: 'America/Bogota'
       },
       // Archivos de log (asegúrate de crear el directorio 'logs' en el root del proyecto)
-      error_file: './logs/backend-error.log',
-      out_file: './logs/backend-out.log',
+      error_file: './logs/toppingfrozen-error.log',
+      out_file: './logs/toppingfrozen-out.log',
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z'
     }
   ]

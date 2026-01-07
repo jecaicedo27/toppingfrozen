@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, AlertTriangle, Package, TrendingUp, History } from 'lucide-react';
 
-const ProductDetailsModal = ({ product, onClose, onUpdate, onAnalyze }) => {
+const ProductDetailsModal = ({ product, onClose, onUpdate, onAnalyze, readOnly = false }) => {
     const [config, setConfig] = useState({
         min_inventory_qty: 0,
         pack_size: 1,
@@ -106,7 +106,8 @@ const ProductDetailsModal = ({ product, onClose, onUpdate, onAnalyze }) => {
                                     min="0"
                                     value={config.min_inventory_qty}
                                     onChange={(e) => setConfig({ ...config, min_inventory_qty: e.target.value })}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
+                                    disabled={readOnly}
                                 />
                             </div>
                             <div>
@@ -118,7 +119,8 @@ const ProductDetailsModal = ({ product, onClose, onUpdate, onAnalyze }) => {
                                     min="1"
                                     value={config.pack_size}
                                     onChange={(e) => setConfig({ ...config, pack_size: e.target.value })}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
+                                    disabled={readOnly}
                                 />
                             </div>
                         </div>
@@ -131,32 +133,34 @@ const ProductDetailsModal = ({ product, onClose, onUpdate, onAnalyze }) => {
                                 type="text"
                                 value={config.supplier}
                                 onChange={(e) => setConfig({ ...config, supplier: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
                                 placeholder="Nombre del proveedor"
+                                disabled={readOnly}
                             />
                         </div>
 
-                        {/* Nuevo Campo: Costo de Compra */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Costo de Compra (Unitario)
-                            </label>
-                            <div className="relative">
-                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                    <span className="text-gray-500 sm:text-sm">$</span>
+                        {/* Nuevo Campo: Costo de Compra - Oculto si es readOnly */}
+                        {!readOnly && (
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Costo de Compra (Unitario)
+                                </label>
+                                <div className="relative">
+                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                        <span className="text-gray-500 sm:text-sm">$</span>
+                                    </div>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        value={config.purchasing_price}
+                                        onChange={(e) => setConfig({ ...config, purchasing_price: e.target.value })}
+                                        className="w-full pl-7 px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                        placeholder="0"
+                                    />
+                                    <p className="mt-1 text-xs text-gray-500">Usado para calcular rentabilidad real.</p>
                                 </div>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    value={config.purchasing_price}
-                                    onChange={(e) => setConfig({ ...config, purchasing_price: e.target.value })}
-                                    className="w-full pl-7 px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                                    placeholder="0"
-                                />
-                                <p className="mt-1 text-xs text-gray-500">Usado para calcular rentabilidad real.</p>
                             </div>
-                            <p className="text-xs text-gray-500 mt-1">Usado para calcular rentabilidad real.</p>
-                        </div>
+                        )}
                     </div>
 
                     {/* Analysis Stats */}
@@ -183,19 +187,21 @@ const ProductDetailsModal = ({ product, onClose, onUpdate, onAnalyze }) => {
                         onClick={onClose}
                         className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md"
                     >
-                        Cancelar
+                        {readOnly ? 'Cerrar' : 'Cancelar'}
                     </button>
-                    <button
-                        onClick={handleSave}
-                        disabled={saving}
-                        className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center gap-2"
-                    >
-                        {saving ? 'Guardando...' : (
-                            <>
-                                <Save className="w-4 h-4" /> Guardar Cambios
-                            </>
-                        )}
-                    </button>
+                    {!readOnly && (
+                        <button
+                            onClick={handleSave}
+                            disabled={saving}
+                            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md flex items-center gap-2"
+                        >
+                            {saving ? 'Guardando...' : (
+                                <>
+                                    <Save className="w-4 h-4" /> Guardar Cambios
+                                </>
+                            )}
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

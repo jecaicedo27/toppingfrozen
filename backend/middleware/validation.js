@@ -5,7 +5,7 @@ const { logOrderUpdateEvent } = require('../utils/auditLogger');
 const schemas = {
   // Validación para login
   login: Joi.object({
-    username: Joi.string().alphanum().min(3).max(30).required(),
+    username: Joi.string().pattern(/^[a-zA-Z0-9_]+$/).min(3).max(30).required(),
     password: Joi.string().min(6).required()
   }),
 
@@ -142,7 +142,6 @@ const schemas = {
 const validate = (schema) => {
   return (req, res, next) => {
     console.log('🔍 VALIDACIÓN - Datos recibidos:', JSON.stringify(req.body, null, 2));
-
     const { error, value } = schema.validate(req.body, {
       abortEarly: false,
       stripUnknown: true

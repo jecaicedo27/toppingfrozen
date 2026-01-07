@@ -39,6 +39,7 @@ import PostventaAnalyticsPage from './pages/PostventaAnalyticsPage';
 import EvidenceGalleryPage from './pages/EvidenceGalleryPage';
 import AutomationDashboardPage from './pages/AutomationDashboardPage';
 import InventoryManagementPage from './pages/InventoryManagementPage';
+import MixturesAuditPage from './pages/MixturesAuditPage';
 import QRGeneratorPage from './pages/QRGeneratorPage';
 import MerchandiseReceptionPage from './pages/MerchandiseReceptionPage';
 import SupplierCodesPage from './pages/SupplierCodesPage';
@@ -46,6 +47,7 @@ import ExecutiveDashboardPage from './pages/ExecutiveDashboardPage';
 import FinancialClosurePage from './pages/FinancialClosurePage';
 import ExpensesPage from './pages/ExpensesPage';
 import OperationalMetricsPage from './pages/OperationalMetricsPage';
+import UserManualPage from './pages/UserManualPage';
 
 // Componentes de layout
 import Layout from './components/Layout';
@@ -337,8 +339,18 @@ const AppRoutes = () => {
         <Route
           path="/inventory-management"
           element={
-            <ProtectedRoute requiredRole="inventory_management">
+            <ProtectedRoute requiredRole={['admin', 'cartera', 'facturador', 'logistica']}>
               <InventoryManagementPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Auditoría de Mezclas A/B - admin */}
+        <Route
+          path="/mixtures-audit"
+          element={
+            <ProtectedRoute requiredRole="admin">
+              <MixturesAuditPage />
             </ProtectedRoute>
           }
         />
@@ -463,6 +475,9 @@ const AppRoutes = () => {
 
         {/* Perfil - accesible para todos los roles */}
         <Route path="profile" element={<ProfilePage />} />
+
+        {/* Manual de Usuario - accesible para todos los roles */}
+        <Route path="manual" element={<UserManualPage />} />
       </Route>
 
       {/* Ruta por defecto */}

@@ -20,7 +20,7 @@ class AutoSyncService {
         }
 
         console.log(`🔄 AutoSync inicializado - Ejecutándose cada ${this.syncInterval} minutos`);
-        
+
         // Programar tarea cron para sincronización automática
         cron.schedule(`${this.syncInterval} * * * *`, () => {
             this.syncProducts();
@@ -41,15 +41,15 @@ class AutoSyncService {
 
         this.isRunning = true;
         const startTime = Date.now();
-        
+
         try {
             console.log('🔄 Iniciando sincronización automática completa...');
-            
+
             // Sincronizar categorías primero (cada hora para no saturar)
             const now = new Date();
-            const shouldSyncCategories = !this.lastCategorySync || 
+            const shouldSyncCategories = !this.lastCategorySync ||
                 (now.getTime() - this.lastCategorySync.getTime()) > (60 * 60 * 1000); // 1 hora
-            
+
             if (shouldSyncCategories) {
                 console.log('📂 Sincronizando categorías...');
                 try {
@@ -66,11 +66,11 @@ class AutoSyncService {
             } else {
                 console.log('📂 Categorías: usando caché (última sync hace menos de 1 hora)');
             }
-            
+
             // Obtener productos actualizados de SIIGO
             console.log('📦 Sincronizando productos...');
             const siigoProducts = await siigoService.getAllProducts();
-            
+
             let updatedCount = 0;
             let unchangedCount = 0;
             let errorCount = 0;
@@ -99,19 +99,19 @@ class AutoSyncService {
                     }
 
                     const existing = existingProduct[0];
-                    const hasChanges = 
+                    const hasChanges =
                         existing.product_name !== productData.product_name ||
-                        existing.category !== productData.category ||
+                        // existing.category !== productData.category || // DESHABILITADO: Usamos categoría personalizada
                         parseFloat(existing.standard_price) !== productData.standard_price ||
                         Boolean(existing.is_active) !== productData.is_active ||
                         existing.description !== productData.description;
 
                     if (hasChanges) {
                         // Actualizar producto con cambios
+                        // NOTA: Ya no actualizamos 'category' desde SIIGO
                         await pool.execute(`
                             UPDATE products 
                             SET product_name = ?, 
-                                category = ?, 
                                 standard_price = ?,
                                 is_active = ?,
                                 description = ?,
@@ -119,7 +119,6 @@ class AutoSyncService {
                             WHERE siigo_product_id = ?
                         `, [
                             productData.product_name,
-                            productData.category,
                             productData.standard_price,
                             productData.is_active,
                             productData.description,
@@ -127,24 +126,24 @@ class AutoSyncService {
                         ]);
 
                         updatedCount++;
-                        
+
                         // Log de cambios específicos
                         const changes = [];
                         if (existing.product_name !== productData.product_name) {
                             changes.push(`nombre: "${existing.product_name}" → "${productData.product_name}"`);
                         }
-                        if (existing.category !== productData.category) {
-                            changes.push(`categoría: "${existing.category}" → "${productData.category}"`);
-                        }
+                        // if (existing.category !== productData.category) {
+                        //    changes.push(`categoría: "${existing.category}" → "${productData.category}"`);
+                        // }
                         if (parseFloat(existing.standard_price) !== productData.standard_price) {
                             changes.push(`precio: $${existing.standard_price} → $${productData.standard_price}`);
                         }
                         if (Boolean(existing.is_active) !== productData.is_active) {
                             changes.push(`estado: ${existing.is_active ? 'Activo' : 'Inactivo'} → ${productData.is_active ? 'Activo' : 'Inactivo'}`);
                         }
-                        
+
                         console.log(`✅ ${product.name}: ${changes.join(', ')}`);
-                        
+
                         // Registrar el cambio en log de sincronización
                         await this.logSync(product.id, 'updated', `Cambios: ${changes.join(', ')}`);
                     } else {
@@ -160,7 +159,7 @@ class AutoSyncService {
 
             const duration = Math.round((Date.now() - startTime) / 1000);
             this.lastSync = new Date();
-            
+
             console.log(`🎉 Sincronización completada en ${duration}s:`);
             console.log(`   ✅ ${updatedCount} productos actualizados`);
             console.log(`   ⚪ ${unchangedCount} productos sin cambios`);
@@ -180,13 +179,13 @@ class AutoSyncService {
     // Función auxiliar para extraer precio
     extractPriceFromSiigo(product) {
         try {
-            if (product.prices && 
-                Array.isArray(product.prices) && 
+            if (product.prices &&
+                Array.isArray(product.prices) &&
                 product.prices.length > 0 &&
                 product.prices[0].price_list &&
                 Array.isArray(product.prices[0].price_list) &&
                 product.prices[0].price_list.length > 0) {
-                
+
                 return parseFloat(product.prices[0].price_list[0].value) || 0;
             }
             return 0;

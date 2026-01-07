@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Download, 
-  Search, 
-  BarChart3, 
-  Package, 
+import {
+  Download,
+  Search,
+  BarChart3,
+  Package,
   RefreshCw,
   Eye,
   Filter,
@@ -13,14 +13,24 @@ import {
   Grid,
   List,
   Tag,
-  DollarSign
+  DollarSign,
+  AlertCircle,
+  CheckCircle2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import io from 'socket.io-client';
 
 const ProductsPage = () => {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingSiigo, setLoadingSiigo] = useState(false);
+  const [syncProgress, setSyncProgress] = useState({
+    active: false,
+    percentage: 0,
+    message: '',
+    status: 'idle', // idle, starting, fetching, processing, completed, error
+    detail: null
+  });
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
@@ -30,10 +40,10 @@ const ProductsPage = () => {
   const [showBarcodeModal, setShowBarcodeModal] = useState(false);
   const [scannedBarcode, setScannedBarcode] = useState('');
   const [barcodeResult, setBarcodeResult] = useState(null);
-  
+
   // Estado para el tipo de vista
   const [viewMode, setViewMode] = useState('table'); // 'table' | 'cards'
-  
+
   // Estados de paginación
   const [pagination, setPagination] = useState({
     currentPage: 1,
@@ -52,7 +62,7 @@ const ProductsPage = () => {
     try {
       const token = localStorage.getItem('token');
       const pageSize = 20;
-      
+
       const params = new URLSearchParams({
         page: page.toString(),
         pageSize: pageSize.toString(),
@@ -122,11 +132,44 @@ const ProductsPage = () => {
     }
   };
 
-  // Cargar productos al montar el componente
+  // Cargar productos al montar el componente y configurar WebSockets
   useEffect(() => {
     loadProducts(1, searchTerm);
     loadStats();
     loadCategories();
+
+    // Configurar Socket.io para progreso de SIIGO
+    const socket = io(); // Usa el proxy del package.json
+
+    socket.on('connect', () => {
+      console.log('🔌 WebSocket conectado para productos');
+      socket.emit('join-siigo-updates');
+    });
+
+    socket.on('product-sync-progress', (data) => {
+      console.log('📡 Progreso de sincronización:', data);
+      setSyncProgress({
+        active: data.status !== 'completed' && data.status !== 'error',
+        percentage: data.progress,
+        message: data.detail?.message || 'Sincronizando...',
+        status: data.status,
+        detail: data.detail
+      });
+
+      if (data.status === 'completed') {
+        toast.success('Sincronización SIIGO completada con éxito');
+        loadProducts();
+        loadStats();
+        setLoadingSiigo(false);
+      } else if (data.status === 'error') {
+        toast.error('Error en la sincronización: ' + (data.detail?.message || 'Error desconocido'));
+        setLoadingSiigo(false);
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -162,7 +205,20 @@ const ProductsPage = () => {
 
   // Función para cargar productos desde SIIGO
   const loadProductsFromSiigo = async () => {
+    if (syncProgress.active) {
+      toast.error('Ya hay una sincronización en curso');
+      return;
+    }
+
     setLoadingSiigo(true);
+    setSyncProgress({
+      active: true,
+      percentage: 0,
+      message: 'Iniciando petición...',
+      status: 'starting',
+      detail: null
+    });
+
     try {
       const token = localStorage.getItem('token');
       const response = await fetch('/api/products/load-from-siigo', {
@@ -174,24 +230,20 @@ const ProductsPage = () => {
       });
 
       const data = await response.json();
-      if (data.success) {
-        toast.success(`
-          Productos cargados exitosamente desde SIIGO:
-          ${data.data.inserted} nuevos, 
-          ${data.data.updated} actualizados
-        `);
-        
-        // Recargar la lista de productos y estadísticas
-        await loadProducts();
-        await loadStats();
+
+      if (response.status === 202 || data.success) {
+        toast.success(data.message || 'Sincronización iniciada correctamente.');
+        // El estado LoadingSiigo se mantiene true hasta que el WebSocket diga 'completed' o 'error'
       } else {
-        toast.error('Error cargando productos desde SIIGO: ' + data.message);
+        setLoadingSiigo(false);
+        setSyncProgress({ ...syncProgress, active: false, status: 'error' });
+        toast.error('Error al iniciar sincronización: ' + data.message);
       }
     } catch (error) {
       console.error('Error cargando productos desde SIIGO:', error);
-      toast.error('Error conectando con SIIGO');
-    } finally {
+      toast.error('Error conectando con el servidor');
       setLoadingSiigo(false);
+      setSyncProgress({ ...syncProgress, active: false, status: 'error' });
     }
   };
 
@@ -293,50 +345,85 @@ const ProductsPage = () => {
         </div>
       </div>
 
+      {/* Barra de Progreso de Sincronización */}
+      {syncProgress.active && (
+        <div className="mb-6 bg-white rounded-xl shadow-sm border border-blue-100 p-5 overflow-hidden relative">
+          <div className="flex justify-between items-center mb-3">
+            <div className="flex items-center">
+              <div className="bg-blue-100 p-2 rounded-lg mr-3">
+                <RefreshCw className={`w-5 h-5 text-blue-600 ${syncProgress.status !== 'completed' ? 'animate-spin' : ''}`} />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900">Sincronización SIIGO en curso</h3>
+                <div className="flex items-center mt-0.5">
+                  <p className="text-sm text-gray-600 font-medium">{syncProgress.message}</p>
+                  {syncProgress.status === 'fetching' && <span className="ml-2 flex h-2 w-2 rounded-full bg-blue-400 animate-ping"></span>}
+                </div>
+              </div>
+            </div>
+            <div className="text-right">
+              <span className="text-3xl font-black text-blue-600 tabular-nums">{syncProgress.percentage}%</span>
+            </div>
+          </div>
+
+          <div className="w-full bg-gray-100 rounded-full h-4 mb-1 overflow-hidden p-1 shadow-inner">
+            <div
+              className="bg-gradient-to-r from-blue-500 to-blue-600 h-full transition-all duration-700 ease-out rounded-full shadow-lg relative"
+              style={{ width: `${syncProgress.percentage}%` }}
+            >
+              <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+            </div>
+          </div>
+
+          {syncProgress.detail?.total && (
+            <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider text-gray-400 mt-2 px-1">
+              <span>Inicio de carga</span>
+              <span className="text-blue-500">Procesando: {syncProgress.detail.processed} de {syncProgress.detail.total} productos</span>
+              <span>Finalizando</span>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Estadísticas */}
       {Object.keys(stats).length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
           <button
             onClick={() => setActiveFilter('')}
-            className={`bg-white rounded-lg shadow p-6 text-center transition-colors hover:bg-blue-50 ${
-              activeFilter === '' ? 'ring-2 ring-blue-500 bg-blue-50' : ''
-            }`}
+            className={`bg-white rounded-lg shadow p-6 text-center transition-colors hover:bg-blue-50 ${activeFilter === '' ? 'ring-2 ring-blue-500 bg-blue-50' : ''
+              }`}
           >
             <h3 className="text-2xl font-bold text-blue-600 mb-1">{stats.total_products || 0}</h3>
             <p className="text-gray-600 text-sm">Total Productos</p>
           </button>
           <button
             onClick={() => setActiveFilter('active')}
-            className={`bg-white rounded-lg shadow p-6 text-center transition-colors hover:bg-green-50 ${
-              activeFilter === 'active' ? 'ring-2 ring-green-500 bg-green-50' : ''
-            }`}
+            className={`bg-white rounded-lg shadow p-6 text-center transition-colors hover:bg-green-50 ${activeFilter === 'active' ? 'ring-2 ring-green-500 bg-green-50' : ''
+              }`}
           >
             <h3 className="text-2xl font-bold text-green-600 mb-1">{stats.active_products || 0}</h3>
             <p className="text-gray-600 text-sm">Activos</p>
           </button>
           <button
             onClick={() => setActiveFilter('inactive')}
-            className={`bg-white rounded-lg shadow p-6 text-center transition-colors hover:bg-red-50 ${
-              activeFilter === 'inactive' ? 'ring-2 ring-red-500 bg-red-50' : ''
-            }`}
+            className={`bg-white rounded-lg shadow p-6 text-center transition-colors hover:bg-red-50 ${activeFilter === 'inactive' ? 'ring-2 ring-red-500 bg-red-50' : ''
+              }`}
           >
             <h3 className="text-2xl font-bold text-red-600 mb-1">{(stats.total_products || 0) - (stats.active_products || 0)}</h3>
             <p className="text-gray-600 text-sm">Inactivos</p>
           </button>
           <button
             onClick={() => setActiveFilter('')}
-            className={`bg-white rounded-lg shadow p-6 text-center transition-colors hover:bg-purple-50 ${
-              activeFilter === '' ? 'ring-2 ring-purple-500 bg-purple-50' : ''
-            }`}
+            className={`bg-white rounded-lg shadow p-6 text-center transition-colors hover:bg-purple-50 ${activeFilter === '' ? 'ring-2 ring-purple-500 bg-purple-50' : ''
+              }`}
           >
             <h3 className="text-2xl font-bold text-purple-600 mb-1">{stats.siigo_synced || 0}</h3>
             <p className="text-gray-600 text-sm">Sincronizados SIIGO</p>
           </button>
           <button
             onClick={() => setActiveFilter('')}
-            className={`bg-white rounded-lg shadow p-6 text-center transition-colors hover:bg-yellow-50 ${
-              activeFilter === '' ? 'ring-2 ring-yellow-500 bg-yellow-50' : ''
-            }`}
+            className={`bg-white rounded-lg shadow p-6 text-center transition-colors hover:bg-yellow-50 ${activeFilter === '' ? 'ring-2 ring-yellow-500 bg-yellow-50' : ''
+              }`}
           >
             <h3 className="text-2xl font-bold text-yellow-600 mb-1">{stats.categories || 0}</h3>
             <p className="text-gray-600 text-sm">Categorías</p>
@@ -362,7 +449,7 @@ const ProductsPage = () => {
             {/* Selected categories badges */}
             <div className="flex flex-wrap gap-1 min-h-[26px] items-center">
               {selectedCategories.length === 0 ? (
-                <span 
+                <span
                   className="text-gray-500 text-sm cursor-pointer flex-1"
                   onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
                 >
@@ -395,7 +482,7 @@ const ProductsPage = () => {
                   </button>
                 </div>
               )}
-              
+
               {/* Clear all button */}
               {selectedCategories.length > 0 && (
                 <button
@@ -406,7 +493,7 @@ const ProductsPage = () => {
                   <X className="w-4 h-4" />
                 </button>
               )}
-              
+
               {/* Dropdown toggle */}
               <button
                 onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
@@ -415,7 +502,7 @@ const ProductsPage = () => {
                 <Filter className="w-4 h-4" />
               </button>
             </div>
-            
+
             {/* Dropdown menu */}
             {showCategoryDropdown && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
@@ -426,18 +513,16 @@ const ProductsPage = () => {
                       <div
                         key={category.value}
                         onClick={() => handleCategoryToggle(category.value)}
-                        className={`flex items-center justify-between p-2 rounded cursor-pointer hover:bg-gray-50 ${
-                          isSelected ? 'bg-blue-50 text-blue-700' : 'text-gray-700'
-                        }`}
+                        className={`flex items-center justify-between p-2 rounded cursor-pointer hover:bg-gray-50 ${isSelected ? 'bg-blue-50 text-blue-700' : 'text-gray-700'
+                          }`}
                       >
                         <span className="flex-1">
                           {category.label} ({category.count})
                         </span>
-                        <div className={`w-4 h-4 border-2 rounded ${
-                          isSelected 
-                            ? 'bg-blue-600 border-blue-600' 
-                            : 'border-gray-300'
-                        } flex items-center justify-center`}>
+                        <div className={`w-4 h-4 border-2 rounded ${isSelected
+                          ? 'bg-blue-600 border-blue-600'
+                          : 'border-gray-300'
+                          } flex items-center justify-center`}>
                           {isSelected && (
                             <div className="w-2 h-2 bg-white rounded-sm"></div>
                           )}
@@ -468,22 +553,20 @@ const ProductsPage = () => {
             <div className="flex bg-gray-100 rounded-lg p-1">
               <button
                 onClick={() => setViewMode('table')}
-                className={`p-2 rounded-md transition-colors ${
-                  viewMode === 'table'
-                    ? 'bg-white shadow text-blue-600'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
+                className={`p-2 rounded-md transition-colors ${viewMode === 'table'
+                  ? 'bg-white shadow text-blue-600'
+                  : 'text-gray-500 hover:text-gray-700'
+                  }`}
                 title="Vista de tabla"
               >
                 <List className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setViewMode('cards')}
-                className={`p-2 rounded-md transition-colors ${
-                  viewMode === 'cards'
-                    ? 'bg-white shadow text-blue-600'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
+                className={`p-2 rounded-md transition-colors ${viewMode === 'cards'
+                  ? 'bg-white shadow text-blue-600'
+                  : 'text-gray-500 hover:text-gray-700'
+                  }`}
                 title="Vista de tarjetas"
               >
                 <Grid className="w-4 h-4" />
@@ -498,7 +581,7 @@ const ProductsPage = () => {
             </button>
           </div>
         </div>
-        
+
         {loading ? (
           <div className="flex justify-center items-center py-12">
             <RefreshCw className="w-8 h-8 animate-spin text-blue-600" />
@@ -573,11 +656,10 @@ const ProductsPage = () => {
                         ) : '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 rounded-full text-xs ${
-                          product.is_active 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-red-100 text-red-800'
-                        }`}>
+                        <span className={`px-2 py-1 rounded-full text-xs ${product.is_active
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-red-100 text-red-800'
+                          }`}>
                           {product.is_active ? "Activo" : "Inactivo"}
                         </span>
                       </td>
@@ -603,11 +685,10 @@ const ProductsPage = () => {
                       <h4 className="font-semibold text-gray-900 text-sm leading-tight line-clamp-2">
                         {product.product_name}
                       </h4>
-                      <span className={`ml-2 px-2 py-1 rounded-full text-xs flex-shrink-0 ${
-                        product.is_active 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-red-100 text-red-800'
-                      }`}>
+                      <span className={`ml-2 px-2 py-1 rounded-full text-xs flex-shrink-0 ${product.is_active
+                        ? 'bg-green-100 text-green-800'
+                        : 'bg-red-100 text-red-800'
+                        }`}>
                         {product.is_active ? "Activo" : "Inactivo"}
                       </span>
                     </div>
@@ -624,7 +705,7 @@ const ProductsPage = () => {
                         {product.category}
                       </span>
                     </div>
-                    
+
                     {product.standard_price && (
                       <div className="flex items-center space-x-2">
                         <DollarSign className="w-3 h-3 text-gray-400" />
@@ -726,7 +807,7 @@ const ProductsPage = () => {
                   >
                     <ChevronLeft className="h-5 w-5" aria-hidden="true" />
                   </button>
-                  
+
                   {/* Páginas */}
                   {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
                     let pageNumber;
@@ -745,11 +826,10 @@ const ProductsPage = () => {
                         key={pageNumber}
                         onClick={() => loadProducts(pageNumber, searchTerm)}
                         disabled={loading}
-                        className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
-                          pageNumber === pagination.currentPage
-                            ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
-                            : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
-                        }`}
+                        className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed ${pageNumber === pagination.currentPage
+                          ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
+                          : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                          }`}
                       >
                         {pageNumber}
                       </button>
@@ -790,7 +870,7 @@ const ProductsPage = () => {
                 <X className="w-6 h-6" />
               </button>
             </div>
-            
+
             <div className="p-6">
               <div className="flex space-x-2 mb-4">
                 <input

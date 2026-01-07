@@ -149,7 +149,7 @@ const OrderReviewModal = ({ isOpen, onClose, order, onConfirm }) => {
     { value: 'transferencia', label: 'Transferencia' },
     { value: 'cliente_credito', label: 'Cliente a Crédito' },
     { value: 'pago_electronico', label: 'Pago Electrónico' },
-    { value: 'contraentrega', label: 'Contraentrega (Solo Medellín)' },
+    { value: 'contraentrega', label: 'Contraentrega (Solo Bogotá)' },
     { value: 'publicidad', label: 'Publicidad (sin validación)' },
     { value: 'reposicion', label: 'Reposición (sin validación)' }
   ];

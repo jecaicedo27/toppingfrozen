@@ -5,6 +5,9 @@ const { verifyToken, requirePermission } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Ruta pública para ver imágenes de evidencia (bypasses Nginx static file handling)
+router.get('/evidence-file/:filename', PackagingController.streamEvidenceFile);
+
 // Todas las rutas requieren autenticación y permisos de empaque
 router.use(verifyToken);
 router.use(requirePermission('packaging'));
@@ -35,19 +38,19 @@ router.put('/verify-all/:orderId', PackagingController.verifyAllItems);
 // Verificar item por código de barras
 router.post('/verify-barcode/:orderId', PackagingController.verifyItemByBarcode);
 
- // Finalizar empaque con control de calidad
+// Finalizar empaque con control de calidad
 router.post('/complete/:orderId', PackagingController.completePackaging);
 
- // Galería global de evidencias (agrupada por pedido, con filtros)
- router.get('/evidence-gallery', PackagingController.listEvidenceGallery);
+// Galería global de evidencias (agrupada por pedido, con filtros)
+router.get('/evidence-gallery', PackagingController.listEvidenceGallery);
 
- // Listar evidencias de empaque para mostrar galería
- router.get('/evidence/:orderId', PackagingController.listPackagingEvidence);
+// Listar evidencias de empaque para mostrar galería
+router.get('/evidence/:orderId', PackagingController.listPackagingEvidence);
 
- // Subir evidencia fotográfica de empaque (múltiples fotos)
- // Campo: photos[] (multipart/form-data)
- // Nota: aumentar maxCount para evitar "Unexpected field" cuando se suben más de 10 fotos
- router.post('/evidence/:orderId', MessengerController.upload.array('photos', 100), PackagingController.uploadPackagingEvidence);
+// Subir evidencia fotográfica de empaque (múltiples fotos)
+// Campo: photos[] (multipart/form-data)
+// Nota: aumentar maxCount para evitar "Unexpected field" cuando se suben más de 10 fotos
+router.post('/evidence/:orderId', MessengerController.upload.array('photos', 100), PackagingController.uploadPackagingEvidence);
 
 // Obtener plantillas de empaque
 router.get('/templates', PackagingController.getPackagingTemplates);

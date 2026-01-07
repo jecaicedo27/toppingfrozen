@@ -10,7 +10,7 @@ const inventoryManagementController = require('../controllers/inventoryManagemen
 router.get(
     '/view',
     auth.authenticateToken,
-    auth.verifyRole(['admin', 'facturacion', 'cartera']),
+    auth.verifyRole(['admin', 'facturacion', 'facturador', 'cartera']),
     inventoryManagementController.getInventoryManagementView
 );
 
@@ -18,7 +18,7 @@ router.get(
 router.get(
     '/products/:id/config',
     auth.authenticateToken,
-    auth.verifyRole(['admin', 'facturacion', 'cartera']),
+    auth.verifyRole(['admin', 'facturacion', 'facturador', 'cartera']),
     inventoryManagementController.getProductConfig
 );
 
@@ -26,7 +26,7 @@ router.get(
 router.put(
     '/products/:id/config',
     auth.authenticateToken,
-    auth.verifyRole(['admin', 'facturacion', 'cartera']),
+    auth.verifyRole(['admin', 'facturacion', 'facturador', 'cartera']),
     inventoryManagementController.updateProductConfig
 );
 
@@ -34,14 +34,14 @@ router.put(
 router.post(
     '/analyze',
     auth.authenticateToken,
-    auth.verifyRole(['admin', 'facturacion', 'cartera']),
+    auth.verifyRole(['admin', 'facturacion', 'facturador', 'cartera']),
     inventoryManagementController.analyzeConsumption
 );
 
 router.get(
     '/kpis',
     auth.authenticateToken,
-    auth.verifyRole(['admin', 'facturacion', 'cartera']),
+    auth.verifyRole(['admin', 'facturacion', 'facturador', 'cartera']),
     inventoryManagementController.getInventoryKPIs
 );
 
@@ -49,7 +49,7 @@ router.get(
 router.post(
     '/calculate-abc',
     auth.authenticateToken,
-    auth.verifyRole(['admin', 'facturacion', 'cartera']),
+    auth.verifyRole(['admin', 'facturacion', 'facturador', 'cartera']),
     inventoryManagementController.calculateABC
 );
 
@@ -57,7 +57,7 @@ router.post(
 router.get(
     '/export-excel',
     auth.authenticateToken,
-    auth.verifyRole(['admin', 'facturacion', 'cartera']),
+    auth.verifyRole(['admin', 'facturacion', 'facturador', 'cartera']),
     inventoryManagementController.exportInventoryToExcel
 );
 
@@ -65,7 +65,7 @@ router.get(
 router.post(
     '/generate-purchase-order',
     auth.authenticateToken,
-    auth.verifyRole(['admin', 'facturacion', 'cartera']),
+    auth.verifyRole(['admin', 'facturacion', 'facturador', 'cartera']),
     inventoryManagementController.generatePurchaseOrder
 );
 

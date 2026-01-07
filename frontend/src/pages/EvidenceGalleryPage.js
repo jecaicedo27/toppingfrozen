@@ -4,6 +4,21 @@ import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
 import * as Icons from 'lucide-react';
 
+const getImageUrl = (url) => {
+  if (!url) return '';
+  if (url.startsWith('http')) return url;
+
+  // Extraer el nombre del archivo si es una evidencia de entrega/empaque
+  if (url.includes('delivery_evidence')) {
+    const parts = url.split('/');
+    const filename = parts[parts.length - 1];
+    return `/api/public/evidence/${filename}/content`;
+  }
+
+  if (url.startsWith('/uploads')) return `/api${url}`;
+  return url;
+};
+
 const Thumbnail = ({ src, alt, onClick, caption }) => (
   <div className="w-24 flex flex-col items-center">
     <button
@@ -12,7 +27,7 @@ const Thumbnail = ({ src, alt, onClick, caption }) => (
       title="Ver imagen"
     >
       <img
-        src={src}
+        src={getImageUrl(src)}
         alt={alt || 'evidencia'}
         className="w-24 h-24 object-cover rounded-md border border-gray-200 hover:opacity-90"
         loading="lazy"
@@ -71,7 +86,7 @@ const Lightbox = ({ photo, allPhotos, onClose, onNavigate }) => {
               </span>
             )}
             <button
-              onClick={() => window.open(photo.url, '_blank')}
+              onClick={() => window.open(getImageUrl(photo.url), '_blank')}
               className="p-2 text-white hover:text-blue-400 transition-colors bg-black/50 rounded-full"
               title="Abrir original"
             >
@@ -101,7 +116,7 @@ const Lightbox = ({ photo, allPhotos, onClose, onNavigate }) => {
 
           <div className="relative flex-1 min-h-0 w-full flex items-center justify-center">
             <img
-              src={photo.url}
+              src={getImageUrl(photo.url)}
               alt="evidencia"
               className="max-h-full max-w-full object-contain"
             />

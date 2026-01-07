@@ -4,13 +4,13 @@ const { validationResult } = require('express-validator');
 
 // Normaliza códigos escaneados y almacenados para evitar problemas por decimales o espacios
 function normalizeBarcode(input) {
-  if (input === null || input === undefined) return null;
-  let s = String(input).trim();
-  s = s.replace(/,/g, '.').replace(/\s+/g, '');
-  if (/^\d+(?:\.\d+)?$/.test(s)) {
-    return s.split('.')[0];
-  }
-  return s;
+    if (input === null || input === undefined) return null;
+    let s = String(input).trim();
+    s = s.replace(/,/g, '.').replace(/\s+/g, '');
+    if (/^\d+(?:\.\d+)?$/.test(s)) {
+        return s.split('.')[0];
+    }
+    return s;
 }
 
 
@@ -20,13 +20,13 @@ const productController = {
     extractPriceFromSiigo(product) {
         try {
             // El precio viene en product.prices[0].price_list[0].value según la estructura de SIIGO
-            if (product.prices && 
-                Array.isArray(product.prices) && 
+            if (product.prices &&
+                Array.isArray(product.prices) &&
                 product.prices.length > 0 &&
                 product.prices[0].price_list &&
                 Array.isArray(product.prices[0].price_list) &&
                 product.prices[0].price_list.length > 0) {
-                
+
                 return parseFloat(product.prices[0].price_list[0].value) || 0;
             }
             return 0;
@@ -36,34 +36,34 @@ const productController = {
         }
     },
 
-    
+
     // Función CORREGIDA para extraer código de barras de SIIGO (busca en múltiples campos)
     extractBarcodeFromSiigo(siigoProduct) {
         // Prioridad 1: Campo principal barcode
         if (siigoProduct.barcode && siigoProduct.barcode.trim()) {
             return siigoProduct.barcode.trim();
         }
-        
+
         // Prioridad 2: Campo additional_fields.barcode (NUEVO - CRÍTICO)
         if (siigoProduct.additional_fields?.barcode && siigoProduct.additional_fields.barcode.trim()) {
             return siigoProduct.additional_fields.barcode.trim();
         }
-        
+
         // Prioridad 3: Buscar en metadata (legacy)
         if (siigoProduct.metadata && Array.isArray(siigoProduct.metadata)) {
-            const barcodeField = siigoProduct.metadata.find(meta => 
+            const barcodeField = siigoProduct.metadata.find(meta =>
                 meta.name && (
                     meta.name.toLowerCase().includes('barcode') ||
                     meta.name.toLowerCase().includes('codigo') ||
                     meta.name.toLowerCase().includes('barra')
                 )
             );
-            
+
             if (barcodeField && barcodeField.value && barcodeField.value.trim()) {
                 return barcodeField.value.trim();
             }
         }
-        
+
         // No tiene código de barras
         return null;
     },
@@ -71,61 +71,61 @@ const productController = {
     // Obtener todos los productos con códigos de barras (con paginación)
     async getAllProducts(req, res) {
         try {
-        // Parámetros de paginación
-        const page = parseInt(req.query.page) || 1;
-        const pageSize = parseInt(req.query.pageSize) || 20;
-        const search = req.query.search || '';
-        const categories = req.query.categories || req.query.category || ''; // Soporte para múltiples categorías
-        const includeInactive = req.query.includeInactive === 'true'; // Parámetro legacy
-        const isActive = req.query.is_active; // Nuevo parámetro específico para filtrar por estado
-        
-        const offset = (page - 1) * pageSize;
-        const limitOffset = `LIMIT ${Number(pageSize)} OFFSET ${Number(offset)}`;
-        
-        // CORREGIDO: Manejar filtro de estado activo/inactivo
-        let searchCondition = 'WHERE 1=1';
-        let queryParams = [];
-        
-        // Si se especifica is_active, filtrar por ese valor específico
-        if (isActive !== undefined) {
-            searchCondition += ` AND pb.is_active = ?`;
-            queryParams.push(parseInt(isActive));
-        } else if (!includeInactive) {
-            // Si no se especifica is_active pero includeInactive es false, solo mostrar activos
-            searchCondition += ` AND pb.is_active = 1`;
-        }
-        
-        if (search.trim()) {
-            searchCondition += ` AND (
+            // Parámetros de paginación
+            const page = parseInt(req.query.page) || 1;
+            const pageSize = parseInt(req.query.pageSize) || 20;
+            const search = req.query.search || '';
+            const categories = req.query.categories || req.query.category || ''; // Soporte para múltiples categorías
+            const includeInactive = req.query.includeInactive === 'true'; // Parámetro legacy
+            const isActive = req.query.is_active; // Nuevo parámetro específico para filtrar por estado
+
+            const offset = (page - 1) * pageSize;
+            const limitOffset = `LIMIT ${Number(pageSize)} OFFSET ${Number(offset)}`;
+
+            // CORREGIDO: Manejar filtro de estado activo/inactivo
+            let searchCondition = 'WHERE 1=1';
+            let queryParams = [];
+
+            // Si se especifica is_active, filtrar por ese valor específico
+            if (isActive !== undefined) {
+                searchCondition += ` AND pb.is_active = ?`;
+                queryParams.push(parseInt(isActive));
+            } else if (!includeInactive) {
+                // Si no se especifica is_active pero includeInactive es false, solo mostrar activos
+                searchCondition += ` AND pb.is_active = 1`;
+            }
+
+            if (search.trim()) {
+                searchCondition += ` AND (
                 pb.product_name LIKE ? OR 
                 pb.barcode LIKE ? OR 
                 pb.internal_code LIKE ? OR 
                 pb.category LIKE ?
             )`;
-            const searchTerm = `%${search.trim()}%`;
-            queryParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
-        }
-        
-        // Filtro por múltiples categorías
-        if (categories.trim()) {
-            const categoryList = categories.split(',').map(cat => cat.trim()).filter(cat => cat);
-            if (categoryList.length > 0) {
-                const placeholders = categoryList.map(() => '?').join(',');
-                searchCondition += ` AND pb.category IN (${placeholders})`;
-                queryParams.push(...categoryList);
+                const searchTerm = `%${search.trim()}%`;
+                queryParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
             }
-        }
-            
+
+            // Filtro por múltiples categorías
+            if (categories.trim()) {
+                const categoryList = categories.split(',').map(cat => cat.trim()).filter(cat => cat);
+                if (categoryList.length > 0) {
+                    const placeholders = categoryList.map(() => '?').join(',');
+                    searchCondition += ` AND pb.category IN (${placeholders})`;
+                    queryParams.push(...categoryList);
+                }
+            }
+
             // Query para obtener el total de productos
             const countQuery = `
                 SELECT COUNT(DISTINCT pb.id) as total
                 FROM products pb
                 ${searchCondition}
             `;
-            
+
             const [countResult] = await pool.execute(countQuery, queryParams);
             const total = countResult[0].total;
-            
+
             // Query para obtener los productos con paginación
             const query = `
                 SELECT 
@@ -135,7 +135,6 @@ const productController = {
                     pb.internal_code,
                     pb.siigo_product_id,
                     pb.category,
-                    pb.category as brand,
                     pb.description,
                     pb.standard_price as unit_weight,
                     pb.standard_price,
@@ -152,14 +151,14 @@ const productController = {
                 ORDER BY pb.product_name ASC
                 ${limitOffset}
             `;
-            
+
             const [products] = await pool.execute(query, queryParams);
-            
+
             // Calcular información de paginación
             const totalPages = Math.ceil(total / pageSize);
             const hasNextPage = page < totalPages;
             const hasPreviousPage = page > 1;
-            
+
             res.json({
                 success: true,
                 data: products,
@@ -184,50 +183,42 @@ const productController = {
         }
     },
 
-    // Cargar productos desde SIIGO API - VERSIÓN COMPLETA CON CÓDIGOS TEMPORALES
+    // Cargar productos desde SIIGO API - VERSIÓN ASÍNCRONA PARA EVITAR TIMEOUT
     loadProductsFromSiigo: async (req, res) => {
         try {
-            console.log('🚀 Iniciando importación completa de productos desde SIIGO...');
-            
-            // Usar el servicio de importación completa
-            const completeImportService = require('../services/completeProductImportService');
-            const result = await completeImportService.importAllProducts();
+            console.log('🚀 Iniciando importación de productos desde SIIGO (Asíncrono)...');
 
-            if (result.success) {
-                // Respuesta exitosa con estadísticas detalladas
-                res.json({
-                    success: true,
-                    message: `🎉 Importación completa exitosa: ${result.imported_products} productos importados, ${result.categories_created} categorías, ${result.real_barcodes} códigos reales, ${result.temp_barcodes} códigos temporales`,
-                    data: {
-                        total_products: result.total_products,
-                        imported_products: result.imported_products,
-                        real_barcodes: result.real_barcodes,
-                        temp_barcodes: result.temp_barcodes,
-                        categories_created: result.categories_created,
-                        duration_seconds: result.duration_seconds,
-                        categories: result.categories,
-                        // Mantener compatibilidad con frontend existente
-                        total_processed: result.total_products,
-                        inserted: result.imported_products,
-                        updated: 0,
-                        errors: result.total_products - result.imported_products
-                    }
-                });
-            } else {
-                res.status(500).json({
-                    success: false,
-                    message: result.message || 'Error en la importación completa de productos',
-                    error: result.error
-                });
-            }
+            // Responder inmediatamente al cliente
+            res.status(202).json({
+                success: true,
+                message: 'La sincronización de productos ha comenzado en segundo plano. Puedes ver el progreso en tiempo real.',
+                status: 'processing'
+            });
+
+            // Usar el servicio de importación completa en segundo plano
+            const completeImportService = require('../services/completeProductImportService');
+
+            // Ejecutar sin await para liberar la petición HTTP
+            completeImportService.importAllProducts().then(result => {
+                if (result.success) {
+                    console.log('✅ Importación en segundo plano finalizada exitosamente');
+                } else {
+                    console.error('❌ Error en importación en segundo plano:', result.message);
+                }
+            }).catch(err => {
+                console.error('❌ Error crítico en importación en segundo plano:', err);
+            });
 
         } catch (error) {
-            console.error('❌ Error en importación completa:', error);
-            res.status(500).json({
-                success: false,
-                message: 'Error interno en la importación de productos desde SIIGO',
-                error: error.message
-            });
+            console.error('❌ Error al iniciar importación:', error);
+            // Si el error ocurre antes de enviar la respuesta
+            if (!res.headersSent) {
+                res.status(500).json({
+                    success: false,
+                    message: 'Error al iniciar la sincronización de productos',
+                    error: error.message
+                });
+            }
         }
     },
 
@@ -235,7 +226,7 @@ const productController = {
     async findByBarcode(req, res) {
         try {
             const { barcode } = req.params;
-            
+
             if (!barcode) {
                 return res.status(400).json({
                     success: false,
@@ -345,7 +336,7 @@ const productController = {
 
             if (product_found) {
                 product_barcode_id = products[0].product_barcode_id;
-                
+
                 // Verificar si este producto está en el pedido
                 const [orderItems] = await pool.execute(
                     'SELECT id FROM order_items WHERE order_id = ? AND product_name LIKE ?',
@@ -427,7 +418,7 @@ const productController = {
     async getCategories(req, res) {
         try {
             console.log('🔍 Obteniendo categorías dinámicas para filtro...');
-            
+
             const categoryService = require('../services/categoryService');
             const categories = await categoryService.getActiveCategories();
 
@@ -452,7 +443,7 @@ const productController = {
     async syncCategories(req, res) {
         try {
             console.log('🔄 Iniciando sincronización manual de categorías...');
-            
+
             const categoryService = require('../services/categoryService');
             const result = await categoryService.syncCategoriesFromSiigo();
 

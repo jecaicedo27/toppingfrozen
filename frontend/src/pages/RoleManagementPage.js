@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Users, 
-  Shield, 
-  Settings, 
-  Plus, 
-  Edit, 
-  Trash2, 
-  Eye, 
+import {
+  Users,
+  Shield,
+  Settings,
+  Plus,
+  Edit,
+  Trash2,
+  Eye,
   EyeOff,
   UserPlus,
   CheckCircle,
@@ -50,7 +50,11 @@ const RoleManagementPage = () => {
 
       // Normalizar respuestas { success, data }
       const pick = (res) => (res?.data?.data ?? res?.data?.users ?? res?.data?.roles ?? res?.data?.permissions ?? res?.data) || [];
-      setUsers(pick(usersRes));
+
+      // Handle Users pagination structure (data.users)
+      const userData = pick(usersRes);
+      setUsers(Array.isArray(userData) ? userData : (userData?.users || []));
+
       setRoles(pick(rolesRes));
       setPermissions(pick(permissionsRes));
       setUserRoles(pick(userRolesRes));
@@ -239,7 +243,7 @@ const RoleManagementPage = () => {
             <div key={role.id} className="bg-white rounded-lg shadow p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center">
-                  <div 
+                  <div
                     className="w-10 h-10 rounded-lg flex items-center justify-center text-white"
                     style={{ backgroundColor: role.color }}
                   >
@@ -315,7 +319,7 @@ const RoleManagementPage = () => {
     if (!selectedUser) return null;
 
     const userRolesList = getUserRoles(selectedUser.id);
-    const availableRoles = roles.filter(role => 
+    const availableRoles = roles.filter(role =>
       !userRolesList.find(ur => ur.id === role.id)
     );
 
@@ -341,7 +345,7 @@ const RoleManagementPage = () => {
                 {userRolesList.map((role) => (
                   <div key={role.id} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg">
                     <div className="flex items-center">
-                      <div 
+                      <div
                         className="w-8 h-8 rounded-lg flex items-center justify-center text-white mr-3"
                         style={{ backgroundColor: role.color }}
                       >
@@ -369,7 +373,7 @@ const RoleManagementPage = () => {
                 {availableRoles.map((role) => (
                   <div key={role.id} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg">
                     <div className="flex items-center">
-                      <div 
+                      <div
                         className="w-8 h-8 rounded-lg flex items-center justify-center text-white mr-3"
                         style={{ backgroundColor: role.color }}
                       >
@@ -423,22 +427,20 @@ const RoleManagementPage = () => {
           <nav className="flex space-x-8">
             <button
               onClick={() => setActiveTab('users')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                activeTab === 'users'
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'users'
                   ? 'border-blue-500 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
+                }`}
             >
               <Users className="inline-block mr-2 h-4 w-4" />
               Usuarios
             </button>
             <button
               onClick={() => setActiveTab('roles')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                activeTab === 'roles'
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'roles'
                   ? 'border-purple-500 text-purple-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
+                }`}
             >
               <Shield className="inline-block mr-2 h-4 w-4" />
               Roles

@@ -31,9 +31,9 @@ class CustomerController {
   async fullSyncAllCustomers(req, res) {
     try {
       const maxPages = Math.min(parseInt(req.query.max_pages || req.body?.max_pages || '200', 10), 500);
-      const runInBackground = req.method === 'GET' || String(req.query.async || '').toLowerCase() === 'true';
+      const runInBackground = req.method === 'GET' || (req.query.async && String(req.query.async).toLowerCase() === 'true');
       const jobId = `full-sync-${Date.now()}`;
-      
+
       console.log(`👥 Iniciando sincronización COMPLETA de clientes desde SIIGO (máx ${maxPages} páginas)...`);
       console.log(`🧰 Modo: ${runInBackground ? 'background (async)' : 'síncrono (esperando respuesta)'}`);
 
@@ -53,7 +53,7 @@ class CustomerController {
         setImmediate(async () => {
           const io = global.io;
           const emit = (event, payload) => {
-            try { io && io.to && io.to('siigo-updates').emit(event, payload); } catch {}
+            try { io && io.to && io.to('siigo-updates').emit(event, payload); } catch { }
           };
 
           try {
@@ -166,14 +166,14 @@ class CustomerController {
       return res.status(500).json({ success: false, message: 'Error en sincronización completa', error: error.message });
     }
   }
-  
+
   // Actualizar todos los clientes desde SIIGO
   async updateAllCustomers(req, res) {
     try {
       console.log('🔄 Iniciando actualización masiva de clientes...');
-      
+
       const result = await customerUpdateService.updateAllCustomersFromSiigo();
-      
+
       res.json({
         success: true,
         message: result.message,
@@ -183,7 +183,7 @@ class CustomerController {
           processedCustomers: result.processedCustomers
         }
       });
-      
+
     } catch (error) {
       console.error('❌ Error en actualización masiva de clientes:', error.message);
       res.status(500).json({
@@ -198,7 +198,7 @@ class CustomerController {
   async updateSingleCustomer(req, res) {
     try {
       const { siigoCustomerId } = req.params;
-      
+
       if (!siigoCustomerId) {
         return res.status(400).json({
           success: false,
@@ -207,9 +207,9 @@ class CustomerController {
       }
 
       console.log(`🔄 Actualizando cliente específico: ${siigoCustomerId}`);
-      
+
       const result = await customerUpdateService.updateSingleCustomer(siigoCustomerId);
-      
+
       res.json({
         success: true,
         message: result.message,
@@ -217,7 +217,7 @@ class CustomerController {
           ordersUpdated: result.ordersUpdated
         }
       });
-      
+
     } catch (error) {
       console.error(`❌ Error actualizando cliente ${req.params.siigoCustomerId}:`, error.message);
       res.status(500).json({

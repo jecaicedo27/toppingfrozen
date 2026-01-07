@@ -227,6 +227,8 @@ try {
   console.log('🧭 Error introspecting cartera router:', e.message);
 }
 app.use('/api/customer-credit', customerCreditRoutes);
+// Route to stream evidence files (public access to bypass auth/nginx issues) - Must be BEFORE packagingRoutes
+app.get('/api/public/evidence/:filename/content', PackagingController.streamEvidenceFile);
 app.use('/api/packaging', packagingRoutes);
 app.use('/api/financial', financialRoutes);
 app.use('/api/packaging-progress', packagingProgressRoutes);
@@ -256,6 +258,7 @@ app.use('/api/postventa', postventaRoutes);
 app.use('/api/monitor', monitorRoutes);
 app.use('/api/whapify', whapifyRoutes);
 app.use('/api/inventory-management', inventoryManagementRoutes);
+app.use('/api/mixtures-audit', require('./routes/mixtures-audit'));
 app.use('/api/receptions', require('./routes/reception'));
 app.use('/api/supplier-codes', require('./routes/supplierCodes'));
 app.use('/api/pos', require('./routes/posRoutes'));

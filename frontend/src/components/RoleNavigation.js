@@ -111,6 +111,14 @@ const RoleNavigation = () => {
       description: 'Entregas y cobros',
       roles: ['admin', 'logistica', 'mensajero']
     },
+    {
+      id: 'inventory-management',
+      name: 'Gestión de Inventario',
+      icon: Icons.LayoutGrid,
+      path: '/inventory-management',
+      description: 'Matriz de inventario y reaprovisionamiento',
+      roles: ['admin', 'cartera', 'facturador', 'logistica']
+    }
 
 
   ];
@@ -172,6 +180,7 @@ const RoleNavigation = () => {
     if (path === '/cashier-collections') return 'cartera-cobros';
     if (path === '/treasury-audit') return 'treasury-audit';
     if (path === '/financial-closure') return 'financial-closure';
+    if (path === '/inventory-management') return 'inventory-management';
 
     return 'dashboard';
   };
