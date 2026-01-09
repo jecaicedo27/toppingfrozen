@@ -1,94 +1,128 @@
-# Sistema de Gestión de Pedidos Universal
+# Sistema de Gestión de Pedidos Universal - Guía de Migración y Despliegue
 
-Sistema completo de gestión de pedidos universal para cualquier empresa con backend Node.js, frontend React y base de datos MySQL.
+Este documento detalla los pasos para desplegar la aplicación en un nuevo servidor, asegurando que la base de datos se migre exactamente y la sincronización con Siigo funcione correctamente.
 
-## Características
+## 1. Prerrequisitos del Sistema
 
-- **Backend**: Node.js + Express + MySQL
-- **Frontend**: React + Tailwind CSS
-- **Base de datos**: MySQL con migraciones completas
-- **Autenticación**: JWT con roles (admin, facturador, cartera, logistica, mensajero)
-- **Configuración**: Multi-empresa con variables de entorno
+Asegúrese de que el servidor tenga instalado:
+- **Node.js**: v16 o superior.
+- **MySQL**: v8.0 recomendado (o MariaDB compatible).
+- **Git**: Para clonar el repositorio.
+- **PM2**: Para gestionar los procesos en producción (`npm install -g pm2`).
 
-## Estructura del Proyecto
+## 2. Instalación del Código
 
-```
-gestion_de_pedidos/
-├── backend/          # Servidor Node.js (puerto 3001)
-├── frontend/         # Aplicación React (puerto 3000)
-├── database/         # Migraciones MySQL
-├── scripts/          # Scripts de setup y configuración
-└── package.json      # Scripts principales
-```
+1.  **Clonar el repositorio:**
+    ```bash
+    git clone https://github.com/jecaicedo27/toppingfrozen.git
+    cd toppingfrozen
+    ```
 
-## Instalación y Configuración
+2.  **Instalar dependencias:**
+    Ejecute el script para instalar dependencias tanto del backend como del frontend:
+    ```bash
+    npm run install:all
+    ```
+    *Si este comando falla, instale manualmente en cada carpeta:*
+    ```bash
+    cd backend && npm install
+    cd ../frontend && npm install
+    cd ..
+    ```
 
-### Prerrequisitos
+## 3. Restauración de la Base de Datos (CRÍTICO)
 
-- Node.js (v16 o superior)
-- MySQL (XAMPP recomendado)
-- npm o yarn
+Para mantener la integridad de los datos y asegurar que sea una **copia exacta**, utilizaremos el archivo `database_dump.sql` incluido en el repositorio.
 
-### Configuración Inicial
+1.  **Crear la base de datos vacía:**
+    Acceda a MySQL y cree la base de datos:
+    ```sql
+    CREATE DATABASE toppingfrozen_2 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    ```
 
-1. **Clonar e instalar dependencias:**
-   ```bash
-   npm run install:all
-   ```
+2.  **Importar el dump:**
+    Desde la raíz del proyecto, ejecute:
+    ```bash
+    mysql -u [usuario] -p toppingfrozen_2 < database_dump.sql
+    ```
+    *Reemplace `[usuario]` por su usuario de MySQL (ev. root). Ingrese la contraseña cuando se le solicite.*
 
-2. **Configurar base de datos:**
-   - Iniciar MySQL (XAMPP)
-   - Crear base de datos: `gestion_pedidos_dev`
-   - Ejecutar migraciones:
-   ```bash
-   npm run migrate
-   ```
+    > **NOTA IMPORTANTE**: Este dump incluye todos los datos, estructuras, procedimientos almacenados y eventos necesarios. No ejecute migraciones adicionales a menos que sea estrictamente necesario.
 
-3. **Configurar variables de entorno:**
-   - Copiar `.env.example` a `.env` en backend/
-   - Ajustar configuración de base de datos
+## 4. Configuración del Entorno (.env)
 
-## Scripts Disponibles
+Debe configurar las variables de entorno para que la aplicación conecte con la base de datos y Siigo.
 
-- `npm run dev` - Iniciar desarrollo (backend + frontend)
-- `npm run migrate` - Crear/actualizar base de datos
-- `npm run build` - Build de producción
-- `npm run setup` - Instalación completa + migraciones
+1.  **Backend:**
+    Copie el archivo de ejemplo o cree `backend/.env` con el siguiente contenido (ajuste las credenciales):
 
-## Configuración por Defecto
+    ```env
+    # --- Server ---
+    PORT=3003
+    NODE_ENV=production
 
-- **Usuario admin**: admin / admin123
-- **Base de datos**: gestion_pedidos_dev
-- **Puerto backend**: 3001
-- **Puerto frontend**: 3000
+    # --- DB ---
+    DB_HOST=127.0.0.1
+    DB_PORT=3306
+    DB_USER=[SU_USUARIO_DB]
+    DB_PASSWORD=[SU_PASSWORD_DB]
+    DB_NAME=toppingfrozen_2
 
-## Roles de Usuario
+    # --- JWT ---
+    JWT_SECRET=[SECRET_KEY_SEGURA]
+    JWT_EXPIRES_IN=24h
 
-- **admin**: Gestión completa del sistema
-- **facturador**: Crear y gestionar pedidos
-- **cartera**: Gestión de pagos y cobranza
-- **logistica**: Gestión de inventario y despachos
-- **mensajero**: Gestión de entregas
+    # --- CORS / Frontend ---
+    FRONTEND_URL=[URL_DEL_FRONTEND_PRODUCCION]
 
-## Funcionalidades
+    # --- SIIGO (CRÍTICO PARA SINCRONIZACIÓN) ---
+    SIIGO_ENABLED=true
+    SIIGO_API_USERNAME=[USUARIO_API_SIIGO]
+    SIIGO_API_ACCESS_KEY=[ACCESS_KEY_SIIGO]
+    SIIGO_API_BASE_URL=https://api.siigo.com
+    SIIGO_PARTNER_ID=siigo
+    SIIGO_WEBHOOK_SECRET=[SECRET_WEBHOOK_DEFINIDO]
 
-1. Login/logout con JWT
-2. Dashboard personalizado por rol
-3. Gestión completa de pedidos
-4. Gestión de usuarios (admin)
-5. Configuración dinámica por empresa
-6. Sistema de estados de pedidos
-7. Reportes y estadísticas
+    # --- Auto Sync ---
+    SIIGO_AUTO_SYNC=true
+    SIIGO_SYNC_INTERVAL=*/15
+    WEBHOOK_BASE_URL=[URL_DEL_BACKEND_PUBLICO]/api/webhooks
+    ```
 
-## Desarrollo
+2.  **Frontend:**
+    Cree `frontend/.env` si es necesario para definir la URL del API:
+    ```env
+    REACT_APP_API_URL=[URL_DEL_BACKEND_PUBLICO]
+    ```
 
-Para desarrollo local con XAMPP:
+## 5. Configuración de Webhooks y Sincronización Siigo
 
-1. Iniciar XAMPP (Apache + MySQL)
-2. Ejecutar `npm run setup`
-3. Ejecutar `npm run dev`
-4. Acceder a http://localhost:3000
+Para activar la sincronización automática y los webhooks, ejecute el siguiente script **después de iniciar el servidor o asegurarse de que la base de datos está lista**.
 
-## Licencia
+1.  **Ejecutar registro de webhooks:**
+    Desde la carpeta raíz:
+    ```bash
+    node backend/register_webhooks.js
+    ```
+    *Este script autenticará con Siigo y registrará los webhooks de productos y clientes utilizando la `WEBHOOK_BASE_URL` definida en el `.env`.*
 
-MIT
+    **Verifique la salida:** Debe decir `Registration Complete`.
+
+## 6. Despliegue en Producción
+
+1.  **Construir el Frontend:**
+    ```bash
+    cd frontend
+    npm run build
+    cd ..
+    ```
+    *Esto generará la carpeta `frontend/build` que será servida por el backend o Nginx.*
+
+2.  **Iniciar Backend con PM2:**
+    ```bash
+    cd backend
+    pm2 start server.js --name "gestion-backend"
+    pm2 save
+    ```
+
+La aplicación debería estar corriendo ahora. Verifique los logs con `pm2 logs gestion-backend` si hay errores.
