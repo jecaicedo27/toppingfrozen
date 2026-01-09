@@ -110,6 +110,8 @@ temp/
 
 # Frontend caches
 frontend/node_modules/.cache/
+frontend/build-*/
+frontend/build_*/
 
 # LOCAL heavy artifacts to keep out of git
 /backup_database_*/

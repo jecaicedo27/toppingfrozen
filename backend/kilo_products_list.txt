@@ -1,0 +1,48 @@
+Found 46 products with 'kilo' in name:
+
+[INACTIVO] Name: Arequipe Estandar 1 kilo | Code: SLE10
+[ACTIVO] Name: Arequipe Lujus 1 kilo | Code: SLE12
+[INACTIVO] Name: Aritos bicolor 1 kilo | Code: TOG52
+[ACTIVO] Name: Aros 1 kilo | Code: TOG61
+[INACTIVO] Name: Bolitas de Cereal Chocolate 1 kilo | Code: TOC17
+[ACTIVO] Name: Casco Mandarina 1 Kilo | Code: TOG60
+[ACTIVO] Name: Casco Sandia 1 kilo | Code: TOG59
+[ACTIVO] Name: Cerebros Rellenos 1 kilo | Code: TOG28
+[ACTIVO] Name: Chicle miniatura 1 Kilo | Code: TOG35
+[ACTIVO] Name: Chilitos Rellenos Picantes 1 Kilo | Code: TOG36
+[ACTIVO] Name: Chococrunch de Fiesta 1 Kilo | Code: TOC21
+[INACTIVO] Name: Chuncks 47% Cacao x 1 Kilo | Code: TOC28
+[ACTIVO] Name: Cobertura Chocolate negro moneda 1 kilo | Code: TOC26
+[ACTIVO] Name: Cobertura de moneda Chocolate blanco 1 kilo | Code: TOC32
+[INACTIVO] Name: Cocoa Natural 1 kilo | Code: TOC29
+[ACTIVO] Name: Girasoles de chocolate Negro 1 kilo | Code: TOC34
+[ACTIVO] Name: Goma Fresa Salvaje Kilo | Code: TOG17
+[ACTIVO] Name: Goma Huevo Kilo | Code: TOG16
+[ACTIVO] Name: Goma Rana Gigante Kilo | Code: TOG15
+[ACTIVO] Name: Goma Tiburones Kilo | Code: TOG18
+[INACTIVO] Name: Gomas Ballenas Orcas 1 kilo | Code: TOG51
+[ACTIVO] Name: Gomas Bananos 1 Kilo | Code: TOG29
+[ACTIVO] Name: Gomas Beso x Kilo | Code: TOG81
+[ACTIVO] Name: Gomas Casco Naranja 1 kilo | Code: TOG63
+[ACTIVO] Name: Gomas cono de colores 1 kilo | Code: TOG80
+[ACTIVO] Name: Gomas Corazon 1 kilo | Code: TOG64
+[ACTIVO] Name: Gomas de Cereza 1 Kilo | Code: TOG62
+[ACTIVO] Name: Gomas de Osos 1 kilo | Code: TOG57
+[INACTIVO] Name: Gomas Figura Fruticas 1 kilo | Code: TOG54
+[INACTIVO] Name: Gomas Figura Mar 1 kilo | Code: TOG55
+[ACTIVO] Name: Gomitas Dentadura 1 kilo | Code: TOG70
+[ACTIVO] Name: Granola Kilo | Code: TOF11
+[INACTIVO] Name: Gusanitos Vidal 1 Kilo | Code: TOG75
+[ACTIVO] Name: Huevitos de Chocolate y Mani 1 kilo | Code: TOC24
+[ACTIVO] Name: Lentejuelas de Colores 1 kilo | Code: TOC22
+[ACTIVO] Name: Maní Achocolatado Colores 1 kilo | Code: TOC25
+[ACTIVO] Name: Mani Confitado Kilo | Code: TOF13
+[INACTIVO] Name: Mani Dulce 2,5 Kilos | Code: TOF14
+[INACTIVO] Name: Mani Dulce Kilo | Code: TOF15
+[ACTIVO] Name: Mezcla para crema chantilly 1 kilo | Code: MEC02
+[ACTIVO] Name: Mezcla para pancakes, creppes y waffles natural - Leche 1 Kilo | Code: MEC01
+[ACTIVO] Name: Mini Lentejuelas 1 Kilo | Code: TOC33
+[ACTIVO] Name: Moritas 1 kilo | Code: TOG58
+[INACTIVO] Name: Ositos Surtidos 1 Kilo | Code: TOG53
+[ACTIVO] Name: Perlas Tapioca 1 Kilo | Code: PT01
+[ACTIVO] Name: Rocas de Chocolate 1 Kilo | Code: TOC23
