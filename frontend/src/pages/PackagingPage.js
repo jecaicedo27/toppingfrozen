@@ -4,8 +4,42 @@ import * as Icons from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
 import audioFeedback from '../utils/audioUtils';
-import { packagingEvidenceService } from '../services/api';
+import { packagingEvidenceService, carrierService } from '../services/api';
 import { io } from 'socket.io-client';
+import { hasOrderPayment, getPaymentMethodLabel, getPaymentBadgeClass } from '../utils/payments';
+
+
+// Helper para clasificar pedidos por canal de envío
+const getChannelLabel = (order, carrierName) => {
+  const dm = (order?.delivery_method || '').toLowerCase();
+
+  // Entrega en bodega/tienda
+  if (
+    dm === 'recoge_bodega' ||
+    dm === 'recogida_tienda' ||
+    dm === 'recoge_bodega_sin_cobro' ||
+    (dm.includes('recoge') && dm.includes('bodega'))
+  ) {
+    return 'Bodega';
+  }
+
+  // Mensajería/local (domicilios ciudad/urbana)
+  if (dm === 'domicilio' || dm === 'domicilio_local' || dm === 'domicilio_ciudad' || dm === 'mensajeria_urbana') {
+    return 'Mensajería Local';
+  }
+
+  // Envíos nacionales (transportadora)
+  if (dm === 'envio_nacional' || dm === 'nacional' || dm.includes('nacional')) {
+    return 'Transportadora';
+  }
+
+  // Fallback por nombre del carrier
+  const cn = (carrierName || '').toLowerCase();
+  if (cn.includes('local')) return 'Mensajería Local';
+  if (cn) return 'Transportadora';
+
+  return '-';
+};
 
 const PackagingPage = () => {
   const { user } = useAuth();
@@ -17,9 +51,53 @@ const PackagingPage = () => {
   const [checklist, setChecklist] = useState([]);
   const [stats, setStats] = useState({});
   const [hasEvidenceUploaded, setHasEvidenceUploaded] = useState(false);
+  const [carriersMap, setCarriersMap] = useState({}); // id -> carrier object
+
   // Estados para alertas y comparación
   const [prevPendingIds, setPrevPendingIds] = useState([]);
   const [prevStatsSnapshot, setPrevStatsSnapshot] = useState(null);
+
+  // Agrupar pedidos por canal/carrier para mostrar en secciones separadas
+  const groupedPending = React.useMemo(() => {
+    const buckets = {
+      'Bodega': [],
+      'Mensajería Local': [],
+      'Otros': []
+    };
+
+    (pendingOrders || []).forEach(order => {
+      const carrierName = carriersMap?.[order?.carrier_id]?.name || '';
+      const channel = getChannelLabel(order, carrierName);
+
+      if (channel === 'Bodega') {
+        buckets['Bodega'].push(order);
+      } else if (channel === 'Mensajería Local') {
+        buckets['Mensajería Local'].push(order);
+      } else if (channel === 'Transportadora') {
+        const key = carrierName || 'Transportadora (Sin asignar)';
+        if (!buckets[key]) buckets[key] = [];
+        buckets[key].push(order);
+      } else {
+        buckets['Otros'].push(order);
+      }
+    });
+
+    const carrierKeys = Object.keys(buckets)
+      .filter(k => !['Bodega', 'Mensajería Local', 'Otros'].includes(k))
+      .sort((a, b) => a.localeCompare(b, 'es'));
+
+    return [
+      { key: 'Bodega', title: `Bodega (${buckets['Bodega'].length})`, items: buckets['Bodega'] },
+      { key: 'Mensajería Local', title: `Mensajería Local (${buckets['Mensajería Local'].length})`, items: buckets['Mensajería Local'] },
+      ...carrierKeys.map(k => ({ key: k, title: `${k} (${buckets[k].length})`, items: buckets[k] })),
+      { key: 'Otros', title: `Otros (${buckets['Otros'].length})`, items: buckets['Otros'] }
+    ];
+  }, [pendingOrders, carriersMap]);
+
+  // Debug: log grouped pending
+  React.useEffect(() => {
+    console.log('[PackagingPage] Grouped Pending:', groupedPending);
+  }, [groupedPending]);
 
   // Verificar si hay un orderId en la URL para procesar directamente
   useEffect(() => {
@@ -36,6 +114,22 @@ const PackagingPage = () => {
   useEffect(() => {
     loadData();
   }, [activeTab]);
+
+  // Cargar transportadoras activas para mapear carrier_id -> nombre
+  useEffect(() => {
+    (async () => {
+      try {
+        const resp = await carrierService.getActive();
+        const list = resp?.data || [];
+        const map = {};
+        list.forEach(c => { if (c?.id != null) map[c.id] = c; });
+        setCarriersMap(map);
+      } catch (e) {
+        // No bloquear la vista si falla
+        console.error('Error cargando carriers:', e?.message || e);
+      }
+    })();
+  }, []);
 
   // Socket: refresco instantáneo cuando llegan pedidos a Empaque
   const socketRef = React.useRef(null);
@@ -596,215 +690,247 @@ const PackagingPage = () => {
     <div className="bg-white rounded-lg shadow">
       <div className="p-6 border-b border-gray-200">
         <h3 className="text-lg font-semibold text-gray-900">Pedidos Pendientes de Empaque</h3>
-        <p className="text-sm text-gray-600 mt-1">Pedidos que llegaron desde logística</p>
+        <p className="text-sm text-gray-600 mt-1">Pedidos agrupados por transportadora/método de envío</p>
       </div>
 
-      {/* Lista móvil (cards) */}
-      <div className="md:hidden p-4 space-y-3">
-        {pendingOrders.map((order) => (
-          <div key={order.id} className="rounded-lg border bg-white shadow-sm p-3">
-            <div className="flex items-start justify-between">
-              <div className="pr-3 min-w-0">
-                <p className="text-xs text-gray-500">{new Date(order.created_at).toLocaleDateString()}</p>
-                <p className="text-sm font-semibold text-gray-900">{order.order_number}</p>
-                <p className="text-sm text-gray-700 truncate">{order.customer_name}</p>
-                {(() => {
-                  const roleText = order.packaging_locked_by_role
-                    ? ` (${String(order.packaging_locked_by_role).toLowerCase() === 'logistica' ? 'Logística' : 'Empaque'})`
-                    : '';
-                  if (order.packaging_status === 'in_progress' && order.packaging_lock_user_id) {
-                    return (
-                      <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-purple-100 text-purple-800">
-                        <Icons.Lock className="w-3 h-3 mr-1" />
-                        Empacando: {order.packaging_locked_by || 'Usuario'}{roleText}
+      {pendingOrders.length === 0 ? (
+        <div className="text-center py-8">
+          <Icons.Package className="mx-auto h-12 w-12 text-gray-400" />
+          <h3 className="mt-2 text-sm font-medium text-gray-900">No hay pedidos pendientes</h3>
+          <p className="mt-1 text-sm text-gray-500">Todos los pedidos están empacados o en proceso</p>
+        </div>
+      ) : (
+        <>
+          {groupedPending.filter(g => (g.items || []).length > 0).map(g => (
+            <div key={g.key} className="mb-6 last:mb-0">
+              {/* Encabezado del grupo */}
+              <div className="px-6 pt-4 pb-2 bg-gray-50 border-t border-gray-200">
+                <h4 className="text-md font-bold text-gray-900">{g.title}</h4>
+              </div>
+
+              {/* Lista móvil (cards) */}
+              <div className="md:hidden p-4 space-y-3">
+                {g.items.map((order) => (
+                  <div key={order.id} className="rounded-lg border bg-white shadow-sm p-3">
+                    <div className="flex items-start justify-between">
+                      <div className="pr-3 min-w-0">
+                        <p className="text-xs text-gray-500">{new Date(order.created_at).toLocaleDateString()}</p>
+                        <p className="text-sm font-semibold text-gray-900">{order.order_number}</p>
+                        <p className="text-sm text-gray-700 truncate">{order.customer_name}</p>
+                        {(() => {
+                          const roleText = order.packaging_locked_by_role
+                            ? ` (${String(order.packaging_locked_by_role).toLowerCase() === 'logistica' ? 'Logística' : 'Empaque'})`
+                            : '';
+                          if (order.packaging_status === 'in_progress' && order.packaging_lock_user_id) {
+                            return (
+                              <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-purple-100 text-purple-800">
+                                <Icons.Lock className="w-3 h-3 mr-1" />
+                                Empacando: {order.packaging_locked_by || 'Usuario'}{roleText}
+                              </div>
+                            );
+                          }
+                          if (order.packaging_status === 'paused') {
+                            return (
+                              <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800">
+                                <Icons.Pause className="w-3 h-3 mr-1" />
+                                Pausado
+                              </div>
+                            );
+                          }
+                          if (order.packaging_status === 'blocked_faltante') {
+                            return (
+                              <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-800">
+                                <Icons.AlertTriangle className="w-3 h-3 mr-1" />
+                                Bloqueado: Faltante
+                              </div>
+                            );
+                          }
+                          if (order.packaging_status === 'blocked_novedad') {
+                            return (
+                              <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-800">
+                                <Icons.AlertOctagon className="w-3 h-3 mr-1" />
+                                Bloqueado: Novedad
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
+                        {(() => {
+                          const pending = typeof order.pending_items === 'number'
+                            ? order.pending_items
+                            : Math.max((order.item_count || 0) - (order.verified_items || 0), 0);
+                          return (
+                            <div className="flex flex-wrap items-center gap-2 mt-1">
+                              <span className="text-xs text-gray-500">
+                                {order.item_count} {order.item_count === 1 ? 'item' : 'items'}
+                              </span>
+                              <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full ${getPendingBadgeClass(pending, order.item_count)}`}>
+                                {getPendingLabel(pending)}
+                              </span>
+                              <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full ${getPaymentBadgeClass(order.payment_method)}`}>
+                                {getPaymentMethodLabel(order.payment_method)}
+                              </span>
+                              {hasOrderPayment(order) ? (
+                                <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-green-100 text-green-800">Pagado</span>
+                              ) : (
+                                <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-red-100 text-red-800">Pendiente</span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
-                    );
-                  }
-                  if (order.packaging_status === 'paused') {
-                    return (
-                      <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800">
-                        <Icons.Pause className="w-3 h-3 mr-1" />
-                        Pausado
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-xs text-gray-500">Total</p>
+                        <p className="text-base font-bold text-green-600">${order.total_amount?.toLocaleString('es-CO')}</p>
                       </div>
-                    );
-                  }
-                  if (order.packaging_status === 'blocked_faltante') {
-                    return (
-                      <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-800">
-                        <Icons.AlertTriangle className="w-3 h-3 mr-1" />
-                        Bloqueado: Faltante
-                      </div>
-                    );
-                  }
-                  if (order.packaging_status === 'blocked_novedad') {
-                    return (
-                      <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-800">
-                        <Icons.AlertOctagon className="w-3 h-3 mr-1" />
-                        Bloqueado: Novedad
-                      </div>
-                    );
-                  }
-                  return null;
-                })()}
-                {(() => {
-                  const pending = typeof order.pending_items === 'number'
-                    ? order.pending_items
-                    : Math.max((order.item_count || 0) - (order.verified_items || 0), 0);
-                  return (
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-xs text-gray-500">
-                        {order.item_count} {order.item_count === 1 ? 'item' : 'items'}
-                      </span>
-                      <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full ${getPendingBadgeClass(pending, order.item_count)}`}>
-                        {getPendingLabel(pending)}
-                      </span>
                     </div>
-                  );
-                })()}
-              </div>
-              <div className="text-right flex-shrink-0">
-                <p className="text-xs text-gray-500">Total</p>
-                <p className="text-base font-bold text-green-600">${order.total_amount?.toLocaleString('es-CO')}</p>
-              </div>
-            </div>
-            <button
-              onClick={() => startPackaging(order.id)}
-              className={`mt-3 w-full inline-flex items-center justify-center px-3 py-2 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-offset-2 ${(order.started ? true : false)
-                  ? 'bg-purple-600 hover:bg-purple-700 focus:ring-purple-500'
-                  : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'
-                }`}
-            >
-              <Icons.Play className="w-4 h-4 mr-2" /> {(order.started ? true : false) ? 'Continuar Empacando' : 'Iniciar Empaque'}
-            </button>
-          </div>
-        ))}
-        {pendingOrders.length === 0 && (
-          <div className="text-center py-8">
-            <Icons.Package className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No hay pedidos pendientes</h3>
-            <p className="mt-1 text-sm text-gray-500">Todos los pedidos están empacados o en proceso</p>
-          </div>
-        )}
-      </div>
-
-      {/* Tabla escritorio */}
-      <div className="hidden md:block overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Pedido
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Cliente
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Items
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Total
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Acciones
-              </th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {pendingOrders.map((order) => (
-              <tr key={order.id}>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div>
-                    <div className="text-sm font-medium text-gray-900">{order.order_number}</div>
-                    <div className="text-sm text-gray-500">{new Date(order.created_at).toLocaleDateString()}</div>
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">{order.customer_name}</div>
-                  {(() => {
-                    const roleText = order.packaging_locked_by_role
-                      ? ` (${String(order.packaging_locked_by_role).toLowerCase() === 'logistica' ? 'Logística' : 'Empaque'})`
-                      : '';
-                    if (order.packaging_status === 'in_progress' && order.packaging_lock_user_id) {
-                      return (
-                        <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-purple-100 text-purple-800">
-                          <Icons.Lock className="w-3 h-3 mr-1" />
-                          Empacando: {order.packaging_locked_by || 'Usuario'}{roleText}
-                        </div>
-                      );
-                    }
-                    if (order.packaging_status === 'paused') {
-                      return (
-                        <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800">
-                          <Icons.Pause className="w-3 h-3 mr-1" />
-                          Pausado
-                        </div>
-                      );
-                    }
-                    if (order.packaging_status === 'blocked_faltante') {
-                      return (
-                        <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-800">
-                          <Icons.AlertTriangle className="w-3 h-3 mr-1" />
-                          Bloqueado: Faltante
-                        </div>
-                      );
-                    }
-                    if (order.packaging_status === 'blocked_novedad') {
-                      return (
-                        <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-800">
-                          <Icons.AlertOctagon className="w-3 h-3 mr-1" />
-                          Bloqueado: Novedad
-                        </div>
-                      );
-                    }
-                    return null;
-                  })()}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">{order.item_count} items</div>
-                  {(() => {
-                    const pending = typeof order.pending_items === 'number'
-                      ? order.pending_items
-                      : Math.max((order.item_count || 0) - (order.verified_items || 0), 0);
-                    return (
-                      <div className="mt-0.5">
-                        <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full ${getPendingBadgeClass(pending, order.item_count)}`}>
-                          {getPendingLabel(pending)}
-                        </span>
-                      </div>
-                    );
-                  })()}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm font-medium text-gray-900">${order.total_amount?.toLocaleString()}</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                  <button
-                    onClick={() => startPackaging(order.id)}
-                    className={`inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white focus:outline-none focus:ring-2 focus:ring-offset-2 ${(order.started ? true : false)
+                    <button
+                      onClick={() => startPackaging(order.id)}
+                      className={`mt-3 w-full inline-flex items-center justify-center px-3 py-2 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-offset-2 ${(order.started ? true : false)
                         ? 'bg-purple-600 hover:bg-purple-700 focus:ring-purple-500'
                         : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'
-                      }`}
-                  >
-                    <Icons.Play className="w-4 h-4 mr-2" /> {(order.started ? true : false) ? 'Continuar Empacando' : 'Iniciar Empaque'}
-                  </button>
-                  {order.packaging_status === 'in_progress' && order.packaging_lock_user_id && String(order.packaging_lock_user_id) !== String(user?.id) && (
-                    <div className="mt-2 text-xs bg-red-50 text-red-700 border border-red-200 rounded px-2 py-1">
-                      El pedido está siendo empacado por: <span className="font-semibold">{order.packaging_locked_by || 'Usuario'}</span>
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {pendingOrders.length === 0 && (
-          <div className="text-center py-8">
-            <Icons.Package className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No hay pedidos pendientes</h3>
-            <p className="mt-1 text-sm text-gray-500">Todos los pedidos están empacados o en proceso</p>
-          </div>
-        )}
-      </div>
+                        }`}
+                    >
+                      <Icons.Play className="w-4 h-4 mr-2" /> {(order.started ? true : false) ? 'Continuar Empacando' : 'Iniciar Empaque'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Tabla escritorio */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Pedido
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Cliente
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Items
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Total
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Pago
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Acciones
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {g.items.map((order) => (
+                      <tr key={order.id}>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div>
+                            <div className="text-sm font-medium text-gray-900">{order.order_number}</div>
+                            <div className="text-sm text-gray-500">{new Date(order.created_at).toLocaleDateString()}</div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">{order.customer_name}</div>
+                          {(() => {
+                            const roleText = order.packaging_locked_by_role
+                              ? ` (${String(order.packaging_locked_by_role).toLowerCase() === 'logistica' ? 'Logística' : 'Empaque'})`
+                              : '';
+                            if (order.packaging_status === 'in_progress' && order.packaging_lock_user_id) {
+                              return (
+                                <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-purple-100 text-purple-800">
+                                  <Icons.Lock className="w-3 h-3 mr-1" />
+                                  Empacando: {order.packaging_locked_by || 'Usuario'}{roleText}
+                                </div>
+                              );
+                            }
+                            if (order.packaging_status === 'paused') {
+                              return (
+                                <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800">
+                                  <Icons.Pause className="w-3 h-3 mr-1" />
+                                  Pausado
+                                </div>
+                              );
+                            }
+                            if (order.packaging_status === 'blocked_faltante') {
+                              return (
+                                <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-800">
+                                  <Icons.AlertTriangle className="w-3 h-3 mr-1" />
+                                  Bloqueado: Faltante
+                                </div>
+                              );
+                            }
+                            if (order.packaging_status === 'blocked_novedad') {
+                              return (
+                                <div className="mt-1 text-xs inline-flex items-center px-2 py-0.5 rounded-full bg-red-100 text-red-800">
+                                  <Icons.AlertOctagon className="w-3 h-3 mr-1" />
+                                  Bloqueado: Novedad
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">{order.item_count} items</div>
+                          {(() => {
+                            const pending = typeof order.pending_items === 'number'
+                              ? order.pending_items
+                              : Math.max((order.item_count || 0) - (order.verified_items || 0), 0);
+                            return (
+                              <div className="mt-0.5">
+                                <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full ${getPendingBadgeClass(pending, order.item_count)}`}>
+                                  {getPendingLabel(pending)}
+                                </span>
+                              </div>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">${order.total_amount?.toLocaleString()}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getPaymentBadgeClass(order.payment_method)}`}>
+                            {getPaymentMethodLabel(order.payment_method)}
+                          </div>
+                          <div className="mt-1">
+                            {hasOrderPayment(order) ? (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                <Icons.CheckCircle className="w-3 h-3 mr-1" /> Pagado
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                <Icons.Clock className="w-3 h-3 mr-1" /> Pendiente
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                          <button
+                            onClick={() => startPackaging(order.id)}
+                            className={`inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white focus:outline-none focus:ring-2 focus:ring-offset-2 ${(order.started ? true : false)
+                              ? 'bg-purple-600 hover:bg-purple-700 focus:ring-purple-500'
+                              : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'
+                              }`}
+                          >
+                            <Icons.Play className="w-4 h-4 mr-2" /> {(order.started ? true : false) ? 'Continuar Empacando' : 'Iniciar Empaque'}
+                          </button>
+                          {order.packaging_status === 'in_progress' && order.packaging_lock_user_id && String(order.packaging_lock_user_id) !== String(user?.id) && (
+                            <div className="mt-2 text-xs bg-red-50 text-red-700 border border-red-200 rounded px-2 py-1">
+                              El pedido está siendo empacado por: <span className="font-semibold">{order.packaging_locked_by || 'Usuario'}</span>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 
@@ -1087,8 +1213,8 @@ const PackagingPage = () => {
             <button
               onClick={() => setActiveTab('pending')}
               className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'pending'
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
             >
               <Icons.Package className="w-5 h-5 inline mr-2" />
@@ -1098,8 +1224,8 @@ const PackagingPage = () => {
               <button
                 onClick={() => setActiveTab('checklist')}
                 className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === 'checklist'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                   }`}
               >
                 <Icons.CheckSquare className="w-5 h-5 inline mr-2" />
@@ -1486,8 +1612,8 @@ const CompletePackagingForm = ({ orderId, onComplete, verifiedCount, totalCount,
             onClick={handleSubmit}
             disabled={!canFinalize}
             className={`px-4 py-2 border border-transparent rounded-md text-white font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-60 ${qualityPassed
-                ? 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
-                : 'bg-red-600 hover:bg-red-700 focus:ring-red-500'
+              ? 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
+              : 'bg-red-600 hover:bg-red-700 focus:ring-red-500'
               }`}
             title={
               (!hasEvidence && requireEvidenceUploaded) ? 'Debe subir al menos 1 foto de evidencia' :
@@ -1961,8 +2087,8 @@ const FastPackagingValidation = ({ orderId, checklist, onVerifyItem, onVerifyAll
           <button
             onClick={() => audioFeedback.toggleEnabled()}
             className={`flex items-center px-3 py-1 rounded-full text-xs font-medium transition-colors ${audioFeedback.isEnabled()
-                ? 'bg-green-100 text-green-800 hover:bg-green-200'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              ? 'bg-green-100 text-green-800 hover:bg-green-200'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             title={`${audioFeedback.isEnabled() ? 'Desactivar' : 'Activar'} sonidos`}
           >
@@ -2054,8 +2180,8 @@ const FastPackagingValidation = ({ orderId, checklist, onVerifyItem, onVerifyAll
               <div
                 key={item.id}
                 className={`p-2 rounded border transition-colors ${item.is_verified
-                    ? 'border-green-400 bg-green-50'
-                    : 'border-gray-300 bg-white hover:border-blue-300'
+                  ? 'border-green-400 bg-green-50'
+                  : 'border-gray-300 bg-white hover:border-blue-300'
                   }`}
               >
                 <div className="w-full md:flex md:items-center md:justify-between space-y-2 md:space-y-0">
@@ -2072,8 +2198,8 @@ const FastPackagingValidation = ({ orderId, checklist, onVerifyItem, onVerifyAll
 
                     {/* Cantidad compacta */}
                     <div className={`px-2 py-1 text-sm font-bold rounded flex-shrink-0 ${item.is_verified
-                        ? 'bg-green-200 text-green-800'
-                        : 'bg-red-200 text-red-800'
+                      ? 'bg-green-200 text-green-800'
+                      : 'bg-red-200 text-red-800'
                       }`}>
                       {Math.floor(parseFloat(item.required_quantity) || 0)}x
                     </div>
@@ -2168,8 +2294,8 @@ const FastPackagingValidation = ({ orderId, checklist, onVerifyItem, onVerifyAll
                           <button
                             onClick={() => resetItemCounter(item)}
                             className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${(itemCounters[item.id] || 0) > 0
-                                ? 'text-gray-400 hover:text-gray-600 cursor-pointer hover:bg-gray-100'
-                                : 'text-transparent cursor-default'
+                              ? 'text-gray-400 hover:text-gray-600 cursor-pointer hover:bg-gray-100'
+                              : 'text-transparent cursor-default'
                               }`}
                             title="Reset contador"
                             disabled={(itemCounters[item.id] || 0) === 0}
@@ -2290,8 +2416,8 @@ const FastPackagingValidation = ({ orderId, checklist, onVerifyItem, onVerifyAll
                 key={item.id}
                 ref={(el) => { if (el) itemRefs.current[item.id] = el; }}
                 className={`scroll-mt-24 p-2 rounded border transition-colors ${item.is_verified
-                    ? 'border-green-400 bg-green-50'
-                    : 'border-red-300 bg-white hover:border-red-400'
+                  ? 'border-green-400 bg-green-50'
+                  : 'border-red-300 bg-white hover:border-red-400'
                   } ${highlightedId === item.id ? 'ring-2 ring-red-400' : ''}`}
               >
                 <div className="w-full md:flex md:items-center md:justify-between space-y-2 md:space-y-0">
@@ -2372,8 +2498,8 @@ const FastPackagingValidation = ({ orderId, checklist, onVerifyItem, onVerifyAll
                         <button
                           onClick={() => resetItemCounter(item)}
                           className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${(itemCounters[item.id] || 0) > 0
-                              ? 'text-gray-400 hover:text-gray-600 cursor-pointer hover:bg-gray-100'
-                              : 'text-transparent cursor-default'
+                            ? 'text-gray-400 hover:text-gray-600 cursor-pointer hover:bg-gray-100'
+                            : 'text-transparent cursor-default'
                             }`}
                           title="Reset contador"
                           disabled={(itemCounters[item.id] || 0) === 0}
@@ -2386,8 +2512,8 @@ const FastPackagingValidation = ({ orderId, checklist, onVerifyItem, onVerifyAll
                           <button
                             onClick={() => resetItemCounter(item)}
                             className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${(itemCounters[item.id] || 0) > 0
-                                ? 'text-gray-400 hover:text-gray-600 cursor-pointer hover:bg-gray-100'
-                                : 'text-transparent cursor-default'
+                              ? 'text-gray-400 hover:text-gray-600 cursor-pointer hover:bg-gray-100'
+                              : 'text-transparent cursor-default'
                               }`}
                             title="Reset"
                             disabled={(itemCounters[item.id] || 0) === 0}

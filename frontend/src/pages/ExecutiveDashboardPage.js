@@ -59,7 +59,22 @@ const ExecutiveDashboardPage = () => {
                 // Calculate start and end dates based on selectedMonth
                 const [year, month] = selectedMonth.split('-');
                 const startDate = `${year}-${month}-01`;
-                const endDate = new Date(year, month, 0).toISOString().slice(0, 10) + ' 23:59:59';
+
+                // Determine end date: use current date if in current month, otherwise use last day of selected month
+                const now = new Date();
+                const selectedMonthDate = new Date(parseInt(year), parseInt(month) - 1, 1);
+                const isCurrentMonth = now.getFullYear() === selectedMonthDate.getFullYear() &&
+                    now.getMonth() === selectedMonthDate.getMonth();
+
+                let endDate;
+                if (isCurrentMonth) {
+                    // Current month: use today's date
+                    endDate = now.toISOString().slice(0, 10) + ' 23:59:59';
+                } else {
+                    // Past or future month: use last day of that month
+                    const lastDayOfMonth = new Date(parseInt(year), parseInt(month), 0);
+                    endDate = lastDayOfMonth.toISOString().slice(0, 10) + ' 23:59:59';
+                }
 
                 console.log(`📅 Fetching data for: ${startDate} to ${endDate}`);
 
@@ -184,8 +199,8 @@ const ExecutiveDashboardPage = () => {
                         <div>
                             <p className="text-sm font-semibold text-gray-400 uppercase tracking-wider">VENTA DEL MES {currentMonthName}</p>
                             <h2 className="text-4xl font-bold text-gray-800 mt-1">{formatCurrency(kpis.currentMonthSales)}</h2>
-                            <p className="text-xs text-green-600 font-medium mt-1">Valor antes de IVA</p>
-                            <p className="text-xs text-gray-500 mt-2">Valor con IVA: {formatCurrency(kpis.currentMonthSales * 1.19)}</p>
+                            <p className="text-xs text-green-600 font-medium mt-1">Valor con IVA incluido</p>
+                            <p className="text-xs text-gray-500 mt-2">Valor sin IVA: {formatCurrency(kpis.currentMonthSalesNoVat)}</p>
                         </div>
                         <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg">
                             <TrendingUp size={28} />
