@@ -1,0 +1,657 @@
+const siigoService = require('./siigoService');
+const { query } = require('../config/database');
+const stockSyncManager = require('./stockSyncManager');
+
+class SiigoUpdateService {
+  constructor() {
+    this.updateInterval = 10 * 60 * 1000; // 10 minutos
+    this.isRunning = false;
+  }
+
+  /**
+   * Iniciar el servicio de actualización automática
+   */
+  start() {
+    if (this.isRunning) {
+      console.log('⚠️  Servicio de actualización SIIGO ya está ejecutándose');
+      return;
+    }
+
+    console.log('🔄 Iniciando servicio de actualización automática de facturas SIIGO...');
+    this.isRunning = true;
+
+    // Ejecutar inmediatamente
+    this.updateProcessedInvoices();
+
+    // Programar ejecuciones periódicas
+    this.intervalId = setInterval(() => {
+      this.updateProcessedInvoices();
+    }, this.updateInterval);
+  }
+
+  /**
+   * Detener el servicio de actualización
+   */
+  stop() {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+    this.isRunning = false;
+    console.log('🛑 Servicio de actualización SIIGO detenido');
+  }
+
+  /**
+   * Actualizar facturas ya procesadas y detectar nuevas facturas
+   */
+  async updateProcessedInvoices() {
+    try {
+      console.log('🔄 Iniciando actualización de facturas procesadas...');
+
+      // Primero, detectar nuevas facturas
+      const newInvoicesCount = await this.detectNewInvoices();
+
+      // Luego, actualizar facturas ya procesadas
+      const processedInvoices = await query(`
+        SELECT DISTINCT siigo_invoice_id, order_id, processed_at
+        FROM siigo_sync_log 
+        WHERE sync_status = 'success' 
+        AND processed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+        ORDER BY processed_at DESC
+      `);
+
+      if (processedInvoices.length === 0) {
+        console.log('ℹ️  No hay facturas procesadas para actualizar');
+        if (newInvoicesCount === 0) {
+          return;
+        }
+      }
+
+      console.log(`📋 Encontradas ${processedInvoices.length} facturas para verificar actualizaciones`);
+
+      let updatedCount = 0;
+      let errorCount = 0;
+
+      for (const processedInvoice of processedInvoices) {
+        try {
+          const wasUpdated = await this.checkAndUpdateInvoice(
+            processedInvoice.siigo_invoice_id,
+            processedInvoice.order_id
+          );
+
+          if (wasUpdated) {
+            updatedCount++;
+          }
+        } catch (error) {
+          console.error(`❌ Error actualizando factura ${processedInvoice.siigo_invoice_id}:`, error.message);
+          errorCount++;
+        }
+      }
+
+      const totalChanges = updatedCount + newInvoicesCount;
+      console.log(`✅ Actualización completada: ${updatedCount} facturas actualizadas, ${newInvoicesCount} nuevas facturas, ${errorCount} errores`);
+
+      // Notificar a clientes conectados si hubo cambios
+      if (totalChanges > 0 && global.io) {
+        global.io.to('siigo-updates').emit('invoices-updated', {
+          type: 'invoices-updated',
+          updatedCount,
+          newInvoicesCount,
+          totalChanges,
+          timestamp: new Date().toISOString()
+        });
+
+        global.io.to('orders-updates').emit('invoices-updated', {
+          type: 'invoices-updated',
+          updatedCount,
+          newInvoicesCount,
+          totalChanges,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+    } catch (error) {
+      console.error('❌ Error en actualización automática de facturas:', error.message);
+    }
+  }
+
+  /**
+   * Detectar nuevas facturas en SIIGO que no han sido importadas
+   */
+  async detectNewInvoices() {
+    try {
+      console.log('🔍 Buscando nuevas facturas en SIIGO...');
+
+      // Obtener facturas de SIIGO de los últimos 2 días
+      const today = new Date();
+      const twoDaysAgo = new Date(today.getTime() - (2 * 24 * 60 * 60 * 1000));
+      let startDate = twoDaysAgo.toISOString().split('T')[0];
+
+      // Respetar fecha de inicio del sistema si está habilitada y es posterior
+      try {
+        const cfg = await query(
+          `SELECT config_value FROM system_config 
+           WHERE config_key = 'siigo_start_date' 
+             AND (SELECT config_value FROM system_config WHERE config_key = 'siigo_start_date_enabled') = 'true'
+           LIMIT 1`
+        );
+        if (cfg && cfg[0] && cfg[0].config_value && cfg[0].config_value > startDate) {
+          startDate = cfg[0].config_value;
+        }
+      } catch (e) {
+        console.warn('⚠️ No se pudo leer siigo_start_date para auto update:', e.message);
+      }
+
+      console.log(`🔍 Filtrando facturas desde: ${startDate}`);
+
+      const siigoInvoicesResult = await siigoService.getInvoices({
+        created_start: startDate,
+        page_size: 100
+      });
+
+      // El servicio devuelve un objeto con results
+      let siigoInvoices = siigoInvoicesResult?.results || [];
+      // Filtro adicional por fecha del comprobante (date) para garantizar que no entren < startDate
+      try {
+        const start = new Date(`${startDate}T00:00:00Z`);
+        siigoInvoices = siigoInvoices.filter(inv => !inv.date || new Date(inv.date) >= start);
+      } catch (e) {
+        console.warn('⚠️ Error aplicando filtro adicional por date en update service:', e.message);
+      }
+
+      if (!siigoInvoices || siigoInvoices.length === 0) {
+        console.log(`✅ 0 facturas obtenidas (desde ${startDate})`);
+        return 0;
+      }
+
+      console.log(`📋 Encontradas ${siigoInvoices.length} facturas en SIIGO desde ${startDate}`);
+
+      // Verificar cuáles no están en nuestra base de datos
+      let newInvoicesCount = 0;
+
+      for (const invoice of siigoInvoices) {
+        try {
+          // Verificar si la factura ya existe en nuestro sistema
+          const existingLog = await query(
+            'SELECT id FROM siigo_sync_log WHERE siigo_invoice_id = ? AND sync_status = "success"',
+            [invoice.id]
+          );
+
+          if (existingLog.length === 0) {
+            console.log(`🆕 Nueva factura detectada: ${invoice.id} - ${invoice.number || 'Sin número'}`);
+
+            // Intentar importar la nueva factura
+            const importResult = await this.importNewInvoice(invoice);
+            if (importResult.success) {
+              newInvoicesCount++;
+              console.log(`✅ Nueva factura ${invoice.id} importada exitosamente como pedido ${importResult.orderId}`);
+            }
+          }
+        } catch (error) {
+          console.error(`❌ Error procesando factura ${invoice.id}:`, error.message);
+        }
+      }
+
+      if (newInvoicesCount > 0) {
+        console.log(`🎉 ${newInvoicesCount} nuevas facturas importadas exitosamente`);
+
+        // Notificar a clientes conectados sobre nuevas facturas
+        if (global.io) {
+          global.io.to('siigo-updates').emit('new-invoice', {
+            type: 'new-invoice',
+            count: newInvoicesCount,
+            message: `${newInvoicesCount} nueva${newInvoicesCount > 1 ? 's' : ''} factura${newInvoicesCount > 1 ? 's' : ''} detectada${newInvoicesCount > 1 ? 's' : ''} en SIIGO`,
+            timestamp: new Date().toISOString()
+          });
+        }
+      } else {
+        console.log('ℹ️  No se encontraron nuevas facturas para importar');
+      }
+
+      return newInvoicesCount;
+
+    } catch (error) {
+      console.error('❌ Error detectando nuevas facturas:', error.message);
+      return 0;
+    }
+  }
+
+  /**
+   * Importar una nueva factura como pedido
+   */
+  async importNewInvoice(invoice) {
+    try {
+      // Usar el servicio SIIGO directamente para importar la factura
+      const siigoService = require('./siigoService');
+
+      // Obtener datos completos de la factura
+      const invoiceData = await siigoService.getInvoiceDetails(invoice.id);
+
+      // Enriquecer con datos del cliente si es posible
+      if (invoiceData.customer && invoiceData.customer.id) {
+        try {
+          const customerData = await siigoService.getCustomer(invoiceData.customer.id);
+          if (customerData) {
+            invoiceData.customer = {
+              ...invoiceData.customer,
+              ...customerData
+            };
+          }
+        } catch (error) {
+          console.error(`❌ Error obteniendo cliente ${invoiceData.customer.id}:`, error.message);
+        }
+      }
+
+      // Procesar factura directamente
+      const result = await siigoService.processInvoiceToOrder(invoiceData, 'auto');
+
+      // Encolar reconciliación de productos afectados por la factura (inmediato)
+      try {
+        await this.enqueueProductsFromInvoice(invoiceData, true);
+      } catch (e) {
+        console.warn('⚠️ No se pudo encolar reconciliación por factura nueva:', e?.message || e);
+      }
+
+      return {
+        success: true,
+        orderId: result.order_id || 'unknown'
+      };
+
+    } catch (error) {
+      console.error(`❌ Error importando nueva factura ${invoice.id}:`, error.message);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Verificar y actualizar una factura específica
+   */
+  async checkAndUpdateInvoice(invoiceId, orderId) {
+    try {
+      // Obtener datos actuales de la factura desde SIIGO
+      const currentInvoiceData = await siigoService.getInvoiceDetails(invoiceId);
+
+      if (!currentInvoiceData) {
+        console.log(`⚠️  Factura ${invoiceId} no encontrada en SIIGO`);
+        return false;
+      }
+
+      // Obtener datos del pedido actual en la base de datos
+      const currentOrder = await query(
+        'SELECT * FROM orders WHERE id = ?',
+        [orderId]
+      );
+
+      if (currentOrder.length === 0) {
+        console.log(`⚠️  Pedido ${orderId} no encontrado en base de datos`);
+        return false;
+      }
+
+      const order = currentOrder[0];
+
+      // Verificar si hay cambios significativos
+      const hasChanges = await this.detectChanges(currentInvoiceData, order);
+
+      if (!hasChanges) {
+        return false; // No hay cambios
+      }
+
+      console.log(`🔄 Detectados cambios en factura ${invoiceId}, actualizando pedido ${orderId}...`);
+
+      // Actualizar el pedido con los nuevos datos
+      await this.updateOrderFromInvoice(currentInvoiceData, order);
+
+      // Encolar reconciliación de los SKUs que aparecen en esta factura (inmediato)
+      try {
+        await this.enqueueProductsFromInvoice(currentInvoiceData, true);
+      } catch (e) {
+        console.warn('⚠️ No se pudo encolar reconciliación por factura actualizada:', e?.message || e);
+      }
+
+      // Registrar la actualización
+      await this.logUpdate(invoiceId, orderId, 'updated');
+
+      return true;
+
+    } catch (error) {
+      console.error(`❌ Error verificando factura ${invoiceId}:`, error.message);
+      await this.logUpdate(invoiceId, orderId, 'error', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Detectar cambios entre la factura de SIIGO y el pedido actual
+   */
+  async detectChanges(invoiceData, order) {
+    const changes = [];
+
+    // Verificar cambios en el total
+    const currentTotal = invoiceData.total || 0;
+    if (Math.abs(currentTotal - (order.total_amount || 0)) > 0.01) {
+      changes.push(`Total: ${order.total_amount} → ${currentTotal}`);
+    }
+
+    // Verificar cambios en observaciones
+    const currentObservations = invoiceData.observations || '';
+    const orderNotes = order.notes || '';
+    if (currentObservations !== orderNotes.replace(/Pedido creado desde factura SIIGO:.*?\n?/, '').trim()) {
+      changes.push('Observaciones modificadas');
+    }
+
+    // Verificar cambios en net_value
+    const currentNetValue = (invoiceData.balance !== undefined && !isNaN(parseFloat(invoiceData.balance))) ? parseFloat(invoiceData.balance) : null;
+    // Si el nuevo net_value es válido, compararlo. Si es null, ignoramos (asumimos que no cambió o no está disponible)
+    if (currentNetValue !== null) {
+      // Si el valor actual en BD es null, o si es diferente
+      if (order.net_value === null || Math.abs(currentNetValue - order.net_value) > 0.01) {
+        changes.push(`Net Value: ${order.net_value} → ${currentNetValue}`);
+      }
+    }
+
+    // Verificar cambios en items
+    const currentItems = siigoService.extractOrderItems(invoiceData);
+    const orderItems = await query('SELECT * FROM order_items WHERE order_id = ?', [order.id]);
+
+    if (currentItems.length !== orderItems.length) {
+      changes.push(`Items: ${orderItems.length} → ${currentItems.length}`);
+    } else {
+      // Verificar cambios en items individuales
+      for (let i = 0; i < currentItems.length; i++) {
+        const currentItem = currentItems[i];
+        const orderItem = orderItems[i];
+
+        if (currentItem.name !== orderItem.name ||
+          Math.abs(currentItem.price - orderItem.price) > 0.01 ||
+          currentItem.quantity !== orderItem.quantity) {
+          changes.push(`Item ${i + 1} modificado`);
+          break;
+        }
+      }
+    }
+
+    if (changes.length > 0) {
+      console.log(`📝 Cambios detectados en factura ${invoiceData.id}:`, changes);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Actualizar pedido con datos actualizados de la factura
+   */
+  async updateOrderFromInvoice(invoiceData, order) {
+    const orderId = order.id;
+
+    // --- DETECCIÓN DE CAMBIOS POST-EMPAQUE ---
+    // Si el pedido ya estaba empacado (para_entrega), guardamos snapshot para mostrar diferencias
+    // y bloqueamos la entrega hasta revisión.
+    if (['para_entrega', 'en_ruta', 'listo_para_entrega'].includes(order.status)) {
+      try {
+        // Obtener items actuales de la BD (estado "empacado")
+        const currentItemsStr = await query('SELECT * FROM order_items WHERE order_id = ?', [orderId]);
+
+        // Si no hay snapshot previo, crear uno. Si ya hay, MANTENER el original (estado "empacado" original)
+        if (!order.packing_snapshot) {
+          await query(
+            'UPDATE orders SET packing_snapshot = ?, is_modified_after_packing = 1 WHERE id = ?',
+            [JSON.stringify(currentItemsStr || []), orderId]
+          );
+          console.log(`📸 Snapshot creado para pedido ${order.order_number} en estado ${order.status}`);
+        } else {
+          // Si ya tenía snapshot, solo asegurar flag levantado
+          await query('UPDATE orders SET is_modified_after_packing = 1 WHERE id = ?', [orderId]);
+          console.log(`⚠️ Pedido ${order.order_number} modificado nuevamente (snapshot conservado)`);
+        }
+      } catch (snapError) {
+        console.error('Error creando snapshot de empaque:', snapError);
+      }
+    }
+    // ----------------------------------------
+
+    // Calculate net_value
+    let netValue = null;
+    if (invoiceData.balance !== undefined && !isNaN(parseFloat(invoiceData.balance))) {
+      netValue = parseFloat(invoiceData.balance);
+    }
+
+    const notes = invoiceData.observations || '';
+
+    // Actualizar solo notas y total, PRESERVANDO payment_method y otros datos críticos
+    await query(`
+      UPDATE orders SET
+        total_amount = ?,
+        net_value = ?,
+        notes = ?,
+        updated_at = NOW()
+      WHERE id = ?
+    `, [
+      invoiceData.total || 0,
+      netValue,
+      notes,
+      orderId
+    ]);
+
+    console.log(`✅ Pedido ${orderId} actualizado (total y notas)`);
+
+    // Actualizar items del pedido
+    try {
+      // Obtener costos maestros
+      const products = await query('SELECT internal_code, product_name, purchasing_price FROM products');
+      const costMap = new Map();
+      products.forEach(p => {
+        if (p.internal_code) costMap.set(p.internal_code, parseFloat(p.purchasing_price));
+      });
+
+      const siigoService = require('./siigoService');
+      const currentItems = siigoService.extractOrderItems(invoiceData);
+
+      if (currentItems && currentItems.length > 0) {
+        // Eliminar items obsoletos
+        await query('DELETE FROM order_items WHERE order_id = ?', [orderId]);
+
+        for (const item of currentItems) {
+          // Cost Lookup Logic
+          let unitCost = 0;
+          if (item.product_code && costMap.has(item.product_code)) {
+            unitCost = costMap.get(item.product_code);
+          }
+
+          const unitPrice = parseFloat(item.price || 0);
+          const quantity = parseFloat(item.quantity || 0);
+          const totalCost = unitCost * quantity;
+          const totalProfit = (unitPrice * quantity) - totalCost;
+          const profitPercent = unitPrice > 0 ? ((unitPrice - unitCost) / unitPrice) * 100 : 0;
+
+          await query(`
+            INSERT INTO order_items (
+                order_id, name, quantity, price, description, product_code, 
+                purchase_cost, profit_amount, profit_percent, created_at
+            ) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+          `, [
+            orderId, item.name, item.quantity, item.price, item.description, item.product_code,
+            unitCost, totalProfit, profitPercent
+          ]);
+        }
+        console.log(`✅ Items del pedido ${orderId} actualizados (${currentItems.length} items)`);
+      }
+    } catch (itemError) {
+      console.error(`❌ Error actualizando items del pedido ${orderId}:`, itemError);
+    }
+
+    console.log(`✅ Actualización completa finalizada para ${orderId}`);
+  }
+
+  /**
+   * Encolar reconciliación de todos los productos afectados por una factura
+   * - Extrae product_code/siigo_id de los items de la factura
+   * - Encola por code o siigo_id en el StockConsistencyService
+   * - Si immediate=true, dispara un ciclo de processQueue para aplicar en caliente
+   */
+  async enqueueProductsFromInvoice(invoiceData, immediate = false) {
+    try {
+      const stockConsistencyService = require('./stockConsistencyService');
+      // Iniciar servicio si no está corriendo
+      await stockConsistencyService.start();
+
+      // Extraer items normalizados desde siigoService (preferido)
+      let items = [];
+      try {
+        items = siigoService.extractOrderItems(invoiceData) || [];
+      } catch (_) {
+        items = [];
+      }
+
+      // Fallback: intentar leer desde invoiceData.items
+      if (!Array.isArray(items) || items.length === 0) {
+        const raw = Array.isArray(invoiceData.items) ? invoiceData.items : [];
+        items = raw.map(it => {
+          const code =
+            it?.code ||
+            it?.product_code ||
+            it?.product?.code ||
+            it?.product_id ||
+            it?.product?.id ||
+            null;
+          return {
+            product_code: code,
+            quantity: it?.quantity || 0
+          };
+        }).filter(x => !!x.product_code);
+      }
+
+      const uniqueCodes = Array.from(
+        new Set(items.map(i => String(i.product_code)).filter(Boolean))
+      );
+
+      if (uniqueCodes.length === 0) {
+        console.log('ℹ️ No se encontraron códigos de producto en la factura para reconciliar.');
+        return;
+      }
+
+      console.log(`🧾 Encolando reconciliación por factura para códigos: ${uniqueCodes.join(', ')}`);
+      uniqueCodes.forEach(code => stockConsistencyService.enqueueByCode(code));
+
+      // Resolución directa y sync inmediato de siigo_id para acelerar reflejo en UI
+      try {
+        const idsToSync = [];
+        for (const code of uniqueCodes) {
+          const rows = await query(
+            `SELECT siigo_id FROM products 
+             WHERE internal_code = ? OR siigo_id = ? 
+             ORDER BY updated_at DESC LIMIT 1`,
+            [code, code]
+          );
+          if (rows && rows[0] && rows[0].siigo_id) {
+            idsToSync.push(String(rows[0].siigo_id));
+          }
+        }
+        if (idsToSync.length > 0) {
+          const stockSync = stockSyncManager.getInstance ? stockSyncManager.getInstance() : null;
+          if (stockSync && typeof stockSync.syncSpecificProduct === 'function') {
+            console.log('⚡ Sincronización inmediata por factura para:', idsToSync.join(', '));
+            for (const sid of idsToSync) {
+              try {
+                await stockSync.syncSpecificProduct(sid);
+                // pequeño delay anti 429 entre ítems
+                await new Promise(r => setTimeout(r, Math.floor(400 + Math.random() * 300)));
+              } catch (e) {
+                console.warn('⚠️ syncSpecificProduct falló para', sid, e?.message || e);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('⚠️ Resolución/sync inmediato por factura falló:', e?.message || e);
+      }
+
+      if (immediate) {
+        // Pequeño delay para dejar encolar, luego procesar un ciclo
+        await new Promise(r => setTimeout(r, 500));
+        await stockConsistencyService.processQueue();
+      }
+    } catch (e) {
+      console.warn('⚠️ enqueueProductsFromInvoice error:', e?.message || e);
+    }
+  }
+
+  /**
+   * Registrar actualización en log
+   */
+  async logUpdate(invoiceId, orderId, status, errorMessage = null) {
+    try {
+      await query(`
+        INSERT INTO siigo_sync_log (siigo_invoice_id, order_id, sync_type, sync_status, error_message, processed_at)
+        VALUES (?, ?, 'update', ?, ?, NOW())
+      `, [invoiceId, orderId, status, errorMessage]);
+    } catch (error) {
+      console.error('❌ Error registrando actualización:', error.message);
+    }
+  }
+
+  /**
+   * Forzar actualización de una factura específica
+   */
+  async forceUpdateInvoice(invoiceId) {
+    try {
+      console.log(`🔄 Forzando actualización de factura ${invoiceId}...`);
+
+      // Buscar el pedido asociado
+      const orderResult = await query(`
+        SELECT order_id FROM siigo_sync_log 
+        WHERE siigo_invoice_id = ? AND sync_status = 'success'
+        ORDER BY processed_at DESC LIMIT 1
+      `, [invoiceId]);
+
+      if (orderResult.length === 0) {
+        throw new Error('No se encontró pedido asociado a esta factura');
+      }
+
+      const orderId = orderResult[0].order_id;
+      const wasUpdated = await this.checkAndUpdateInvoice(invoiceId, orderId);
+
+      return {
+        success: true,
+        updated: wasUpdated,
+        message: wasUpdated ? 'Factura actualizada exitosamente' : 'No se detectaron cambios'
+      };
+
+    } catch (error) {
+      console.error(`❌ Error forzando actualización de factura ${invoiceId}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Obtener estadísticas de actualizaciones
+   */
+  async getUpdateStats() {
+    try {
+      const stats = await query(`
+        SELECT 
+          COUNT(*) as total_updates,
+          SUM(CASE WHEN sync_status = 'updated' THEN 1 ELSE 0 END) as successful_updates,
+          SUM(CASE WHEN sync_status = 'error' THEN 1 ELSE 0 END) as failed_updates,
+          MAX(processed_at) as last_update
+        FROM siigo_sync_log 
+        WHERE sync_type = 'update'
+        AND processed_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+      `);
+
+      return stats[0];
+    } catch (error) {
+      console.error('❌ Error obteniendo estadísticas de actualización:', error.message);
+      throw error;
+    }
+  }
+}
+
+// Instancia singleton
+const siigoUpdateService = new SiigoUpdateService();
+
+module.exports = siigoUpdateService;

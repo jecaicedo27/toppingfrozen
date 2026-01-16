@@ -1,0 +1,474 @@
+const { pool } = require('../config/database');
+const siigoService = require('./siigoService');
+
+// Normalizar códigos de barras para evitar decimales/espacios/comas
+function normalizeBarcode(input) {
+  if (input === null || input === undefined) return null;
+  let s = String(input).trim();
+  // Unificar separador decimal y eliminar espacios
+  s = s.replace(/,/g, '.').replace(/\s+/g, '');
+  // Si es numérico con posible parte decimal, remover la parte decimal
+  if (/^\d+(?:\.\d+)?$/.test(s)) {
+    return s.split('.')[0];
+  }
+  return s;
+}
+
+class CompleteProductImportService {
+  constructor() {
+    this.importedCount = 0;
+    this.tempBarcodeCount = 0;
+    this.realBarcodeCount = 0;
+    this.categoriesCreated = new Set();
+    this.isProcessing = false;
+  }
+
+  // Ayudante para emitir progreso vía WebSockets
+  emitProgress(status, progress, detail = {}) {
+    if (global.io) {
+      global.io.to('siigo-updates').emit('product-sync-progress', {
+        status,
+        progress,
+        detail,
+        timestamp: new Date()
+      });
+    }
+  }
+
+  // Función para generar códigos de barras temporales únicos
+  generateTemporaryBarcode(productCode, index, companyPrefix = 'COMPANY') {
+    const timestamp = Date.now().toString().slice(-8); // Últimos 8 dígitos del timestamp
+    const paddedIndex = index.toString().padStart(4, '0');
+
+    // Truncar productCode si es muy largo
+    const truncatedCode = (productCode || '').slice(0, 8).toUpperCase();
+
+    return `${companyPrefix}-${truncatedCode}-${timestamp}-${paddedIndex}`;
+  }
+
+  // Función para extraer código de barras mejorada
+  extractBarcodeFromSiigo(siigoProduct) {
+    // Prioridad 1: Campo principal barcode
+    if (siigoProduct.barcode && String(siigoProduct.barcode).trim()) {
+      return String(siigoProduct.barcode).trim();
+    }
+
+    // Prioridad 2: Campo additional_fields.barcode
+    if (siigoProduct.additional_fields?.barcode && String(siigoProduct.additional_fields.barcode).trim()) {
+      return String(siigoProduct.additional_fields.barcode).trim();
+    }
+
+    // Prioridad 3: Buscar en metadata
+    if (siigoProduct.metadata && Array.isArray(siigoProduct.metadata)) {
+      const barcodeField = siigoProduct.metadata.find(meta =>
+        meta?.name && (
+          meta.name.toLowerCase().includes('barcode') ||
+          meta.name.toLowerCase().includes('codigo') ||
+          meta.name.toLowerCase().includes('barra')
+        )
+      );
+
+      if (barcodeField && barcodeField.value && String(barcodeField.value).trim()) {
+        return String(barcodeField.value).trim();
+      }
+    }
+
+    return null;
+  }
+
+  // Función para extraer precio de SIIGO
+  extractPriceFromSiigo(product) {
+    try {
+      if (
+        product.prices &&
+        Array.isArray(product.prices) &&
+        product.prices.length > 0 &&
+        product.prices[0].price_list &&
+        Array.isArray(product.prices[0].price_list) &&
+        product.prices[0].price_list.length > 0
+      ) {
+        return parseFloat(product.prices[0].price_list[0].value) || 0;
+      }
+      return 0;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  // Función para limpiar productos existentes
+  async clearExistingProducts() {
+    console.log('🗑️ Limpiando productos existentes...');
+    await pool.execute('DELETE FROM products');
+    console.log('✅ Productos eliminados');
+  }
+
+  // Función para insertar categorías dinámicamente
+  async insertCategories(categoriesSet) {
+    console.log(`📂 Procesando ${categoriesSet.size} categorías...`);
+
+    for (const category of categoriesSet) {
+      try {
+        // Verificar si la categoría ya existe
+        const [existing] = await pool.execute('SELECT id FROM categories WHERE name = ?', [category]);
+
+        if (existing.length === 0) {
+          // Insertar nueva categoría
+          await pool.execute(
+            'INSERT INTO categories (name, description, created_at, updated_at) VALUES (?, ?, NOW(), NOW())',
+            [category, `Categoría ${category} importada desde SIIGO`]
+          );
+        }
+      } catch (error) {
+        console.warn(`⚠️ Error insertando categoría ${category}:`, error.message);
+      }
+    }
+
+    console.log(`✅ ${categoriesSet.size} categorías procesadas`);
+  }
+
+  // Función principal de importación completa
+  async importAllProducts() {
+    const startTime = Date.now();
+
+    try {
+      this.isProcessing = true;
+      this.importedCount = 0;
+      this.tempBarcodeCount = 0;
+      this.realBarcodeCount = 0;
+
+      this.emitProgress('starting', 0, { message: 'Iniciando conexión con SIIGO...' });
+
+      console.log('🔗 Conectado a la base de datos');
+      console.log('🔐 Autenticando con SIIGO...');
+
+      // Obtener TODOS los productos paginados de SIIGO
+      console.log('📦 Obteniendo TODOS los productos de SIIGO...');
+      const allProducts = [];
+      let currentPage = 1;
+      let hasMorePages = true;
+
+      while (hasMorePages) {
+        this.emitProgress('fetching', Math.min(5 + (currentPage * 2), 40), {
+          message: `Consultando productos en SIIGO (Página ${currentPage})...`,
+          page: currentPage
+        });
+
+        console.log(`📄 Consultando página ${currentPage}...`);
+
+        let retries = 0;
+        let success = false;
+
+        while (retries < 3 && !success) {
+          try {
+            // Usar el nuevo método no recursivo
+            const response = await siigoService.getProductsPage(currentPage);
+            const products = response.results;
+            const pagination = response.pagination;
+
+            if (!products || products.length === 0) {
+              hasMorePages = false;
+              success = true;
+              break;
+            }
+
+            console.log(`   ➤ Productos en página ${currentPage}: ${products.length}`);
+            allProducts.push(...products);
+
+            // Control de paginación usando metadatos reales de SIIGO
+            if (pagination.total_pages > currentPage) {
+              currentPage++;
+              // Pausa breve para no saturar
+              await new Promise(resolve => setTimeout(resolve, 500));
+            } else {
+              hasMorePages = false;
+            }
+            success = true;
+
+          } catch (pageError) {
+            retries++;
+            console.error(`⚠️ Error obteniendo página ${currentPage} (Intento ${retries}/3):`, pageError.message);
+
+            if (retries >= 3) {
+              console.error(`❌ Fallo definitivo en página ${currentPage}. Abortando resto de la importación.`);
+              hasMorePages = false; // Solo abortar tras 3 fallos consecutivos
+            } else {
+              const waitTime = 2000 * retries;
+              console.log(`⏳ Esperando ${waitTime}ms antes de reintentar...`);
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+            }
+          }
+        }
+      }
+
+      console.log(`🎯 Total productos obtenidos: ${allProducts.length}`);
+
+      if (allProducts.length === 0) {
+        return {
+          success: false,
+          message: 'No se encontraron productos en SIIGO'
+        };
+      }
+
+      // Limpiar productos existentes - DESHABILITADO para evitar pérdida de configuración
+      // await this.clearExistingProducts();
+
+      console.log('💾 Insertando TODOS los productos en la base de datos...');
+      this.emitProgress('processing', 45, {
+        message: 'Procesando productos e insertando en base de datos local...',
+        total_to_process: allProducts.length
+      });
+
+      // Crear conjunto de categorías
+      const categoriesSet = new Set();
+      let tempBarcodeIndex = 0;
+
+      for (let i = 0; i < allProducts.length; i++) {
+        const siigoProduct = allProducts[i];
+
+        try {
+          // 🔍 FILTRO: Ignorar productos sin lista de precios (ocultos en ventas/activos fijos)
+          if (!siigoProduct.prices || !Array.isArray(siigoProduct.prices) || siigoProduct.prices.length === 0) {
+            // Opcional: Loguear solo si no es un activo fijo obvio para no llenar el log
+            // console.log(`🚫 Saltando producto sin precio (oculto): ${siigoProduct.code}`);
+            continue;
+          }
+
+          // Extraer datos básicos
+          const productName = siigoProduct.name || `Producto ${siigoProduct.code || i}`;
+          const internalCode = siigoProduct.code || null;
+          const category = siigoProduct.account_group?.name || 'Sin categoría';
+          const description = siigoProduct.description || '';
+          const standardPrice = this.extractPriceFromSiigo(siigoProduct);
+          const siigoId = siigoProduct.id || null;
+          const availableQuantity = siigoProduct.available_quantity || 0;
+
+          // Agregar categoría al conjunto
+          if (category && category !== 'Sin categoría') {
+            categoriesSet.add(category);
+          }
+
+          // Extraer código de barras real de SIIGO y normalizar
+          let rawBarcode = this.extractBarcodeFromSiigo(siigoProduct);
+          let barcode = normalizeBarcode(rawBarcode);
+          let barcodeType = 'temp';
+
+          if (barcode && barcode.length > 0 && barcode !== 'PENDIENTE') {
+            // Barcode real encontrado
+            if (rawBarcode && rawBarcode !== barcode) {
+              console.log(`✅ Real barcode: ${internalCode} -> ${rawBarcode} (normalizado a ${barcode})`);
+            } else {
+              console.log(`✅ Real barcode: ${internalCode} -> ${barcode}`);
+            }
+            // Validar duplicados en BD local (política: NO duplicados)
+            try {
+              const [conflict] = await pool.execute(
+                'SELECT id, internal_code FROM products WHERE barcode = ? LIMIT 1',
+                [barcode]
+              );
+              if (Array.isArray(conflict) && conflict.length > 0 && conflict[0].internal_code !== internalCode) {
+                const suffix = String(Date.now()).slice(-6);
+                const original = barcode;
+                barcode = `TEMP-DUP-${original}-${(internalCode || 'UNK')}-${suffix}`;
+                console.warn(`⚠️ Barcode duplicado detectado (${original}) ya usado por ${conflict[0].internal_code}. Importando ${internalCode} con temporal: ${barcode}`);
+                // Contabilizar como temporal para métricas
+                this.tempBarcodeCount++;
+                barcodeType = 'temp';
+              } else {
+                this.realBarcodeCount++;
+                barcodeType = 'real';
+              }
+            } catch (dupErr) {
+              console.warn('⚠️ Error verificando duplicado de barcode:', dupErr.message);
+              this.realBarcodeCount++;
+              barcodeType = 'real';
+            }
+          } else {
+            // Generar barcode temporal por ausencia en SIIGO
+            const suffix = String(Date.now()).slice(-6);
+            barcode = `TEMP-NOBC-${(internalCode || `PROD${i}`)}-${suffix}`;
+            console.log(`🔧 Temp barcode (sin código): ${internalCode} -> ${barcode}`);
+            this.tempBarcodeCount++;
+            tempBarcodeIndex++;
+          }
+
+          // Estado activo: SIIGO active === true
+          const isActive = siigoProduct.active === true ? 1 : 0;
+
+          // Insertar producto en la base de datos (con manejo de duplicado de barcode)
+          // Verificar si el producto ya existe por siigo_id
+          let [existingProduct] = await pool.execute(
+            'SELECT id, barcode, internal_code, siigo_id FROM products WHERE siigo_id = ?',
+            [siigoId]
+          );
+
+          // LOGICA ESPEJO (MIRROR SYNC):
+          // Si no lo encontramos por UUID, intentamos buscarlo por CÓDIGO INTERNO para recuperar el enlace
+          if (existingProduct.length === 0 && internalCode) {
+            const [foundByCode] = await pool.execute(
+              'SELECT id, barcode, internal_code, siigo_id FROM products WHERE internal_code = ? LIMIT 1',
+              [internalCode]
+            );
+
+            if (foundByCode.length > 0) {
+              console.log(`🔗 RE-ENLACE DETECTADO: El producto ${internalCode} cambió de UUID en Siigo.`);
+              console.log(`   Viejo UUID: ${foundByCode[0].siigo_id} -> Nuevo UUID: ${siigoId}`);
+              existingProduct = foundByCode; // Usamos el registro encontrado para actualizarlo
+            }
+          }
+
+          if (existingProduct.length > 0) {
+            // ACTUALIZAR producto existente
+            const existingId = existingProduct[0].id;
+
+            // Solo actualizar barcode si el nuevo es válido y diferente (evitar sobrescribir con temporales si ya tiene uno real)
+            let barcodeToUpdate = existingProduct[0].barcode;
+            if (barcodeType === 'real') {
+              barcodeToUpdate = barcode;
+            }
+
+            await pool.execute(
+              `UPDATE products SET 
+                product_name = ?, 
+                barcode = ?, 
+                internal_code = ?, 
+                description = ?,
+                standard_price = ?, 
+                siigo_product_id = ?, 
+                available_quantity = ?,
+                is_active = ?, 
+                updated_at = NOW(), 
+                last_sync_at = NOW(), 
+                stock = ?
+               WHERE id = ?`,
+              [
+                productName,
+                barcodeToUpdate,
+                internalCode,
+                description,
+                standardPrice,
+                internalCode,
+                availableQuantity,
+                isActive,
+                availableQuantity,
+                existingId
+              ]
+            );
+            // console.log(`🔄 Producto actualizado: ${internalCode}`);
+          } else {
+            // INSERTAR nuevo producto
+            // Usamos 'SIN CLASIFICAR' para la categoría ya que ahora es personalizada
+            const defaultCategory = 'SIN CLASIFICAR';
+
+            try {
+              await pool.execute(
+                `INSERT INTO products (
+                  product_name, barcode, internal_code, category, description,
+                  standard_price, siigo_product_id, siigo_id, available_quantity,
+                  is_active, created_at, updated_at, last_sync_at, stock
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW(), ?)`,
+                [
+                  productName,
+                  barcode,
+                  internalCode,
+                  defaultCategory,
+                  description,
+                  standardPrice,
+                  internalCode,
+                  siigoId,
+                  availableQuantity,
+                  isActive,
+                  availableQuantity
+                ]
+              );
+            } catch (insertErr) {
+              if (insertErr && insertErr.code === 'ER_DUP_ENTRY' && barcodeType !== 'temp') {
+                const suffix = String(Date.now()).slice(-6);
+                const fallback = `TEMP-DUP-${(rawBarcode || barcode || 'DUP')}-${(internalCode || 'UNK')}-${suffix}`;
+                console.warn(`⚠️ ER_DUP_ENTRY al insertar ${internalCode} con barcode ${barcode}. Reintentando con ${fallback}`);
+                barcode = fallback;
+                await pool.execute(
+                  `INSERT INTO products (
+                    product_name, barcode, internal_code, category, description,
+                    standard_price, siigo_product_id, siigo_id, available_quantity,
+                    is_active, created_at, updated_at, last_sync_at, stock
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW(), ?)`,
+                  [
+                    productName,
+                    barcode,
+                    internalCode,
+                    defaultCategory,
+                    description,
+                    standardPrice,
+                    internalCode,
+                    siigoId,
+                    availableQuantity,
+                    isActive,
+                    availableQuantity
+                  ]
+                );
+                this.tempBarcodeCount++;
+                barcodeType = 'temp';
+                throw insertErr;
+              }
+            }
+          }
+
+          this.importedCount++;
+
+          // Rate limiting cada 50 productos
+          if (i % 50 === 0 && i > 0) {
+            const currentProgress = 45 + Math.round((i / allProducts.length) * 50);
+            this.emitProgress('processing', currentProgress, {
+              message: `Procesando productos (${i}/${allProducts.length})...`,
+              processed: i,
+              total: allProducts.length
+            });
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        } catch (productError) {
+          console.error(`❌ Error procesando producto ${siigoProduct.code}:`, productError.message);
+        }
+      }
+
+      // Insertar todas las categorías encontradas
+      this.categoriesCreated = categoriesSet;
+      await this.insertCategories(categoriesSet);
+
+      const endTime = Date.now();
+      const duration = Math.round((endTime - startTime) / 1000);
+
+      const result = {
+        success: true,
+        total_products: allProducts.length,
+        imported_products: this.importedCount,
+        real_barcodes: this.realBarcodeCount,
+        temp_barcodes: this.tempBarcodeCount,
+        categories_created: categoriesSet.size,
+        duration_seconds: duration,
+        categories: Array.from(categoriesSet)
+      };
+
+      console.log('📊 RESUMEN DE IMPORTACIÓN:');
+      console.log(`✅ Productos insertados: ${this.importedCount} de ${allProducts.length}`);
+      console.log(`🏷️ Barcodes reales: ${this.realBarcodeCount}`);
+      console.log(`🔧 Barcodes temporales: ${this.tempBarcodeCount}`);
+      console.log(`📂 Categorías creadas: ${categoriesSet.size}`);
+      console.log('🎉 IMPORTACIÓN COMPLETA EXITOSA');
+
+      this.emitProgress('completed', 100, result);
+      this.isProcessing = false;
+      return result;
+    } catch (error) {
+      console.error('❌ Error en importación completa:', error);
+      this.emitProgress('error', 0, { message: error.message });
+      this.isProcessing = false;
+      return {
+        success: false,
+        message: 'Error en la importación completa de productos',
+        error: error.message
+      };
+    }
+  }
+}
+
+module.exports = new CompleteProductImportService();

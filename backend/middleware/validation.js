@@ -1,0 +1,244 @@
+const Joi = require('joi');
+const { logOrderUpdateEvent } = require('../utils/auditLogger');
+
+// Esquemas de validación
+const schemas = {
+  // Validación para login
+  login: Joi.object({
+    username: Joi.string().pattern(/^[a-zA-Z0-9_]+$/).min(3).max(30).required(),
+    password: Joi.string().min(6).required()
+  }),
+
+  // Validación para crear usuario
+  createUser: Joi.object({
+    username: Joi.string().pattern(/^[a-zA-Z0-9_]+$/).min(3).max(30).required(),
+    email: Joi.string().email().optional().allow(''),
+    password: Joi.string().min(6).required(),
+    role: Joi.string().valid('admin', 'facturador', 'cartera', 'logistica', 'mensajero', 'empaque', 'empacador').required(),
+    fullName: Joi.string().min(2).max(100).optional().allow(''),
+    full_name: Joi.string().min(2).max(100).optional().allow(''),
+    phone: Joi.string().pattern(/^[0-9+\-\s()]+$/).optional()
+  }),
+
+  // Validación para actualizar usuario
+  updateUser: Joi.object({
+    username: Joi.string().pattern(/^[a-zA-Z0-9_]+$/).min(3).max(30).optional(),
+    email: Joi.string().email().optional().allow(''),
+    role: Joi.string().valid('admin', 'facturador', 'cartera', 'logistica', 'mensajero', 'empaque', 'empacador').optional(),
+    fullName: Joi.string().min(2).max(100).optional(),
+    full_name: Joi.string().min(2).max(100).optional(),
+    phone: Joi.string().pattern(/^[0-9+\-\s()]+$/).optional(),
+    active: Joi.boolean().optional()
+  }),
+
+  // Validación para crear pedido
+  createOrder: Joi.object({
+    invoiceCode: Joi.string().max(50).optional().allow(null, ''),
+    customerName: Joi.string().min(2).max(100).required(),
+    customerPhone: Joi.string().pattern(/^[0-9+\-\s()]+$/).required(),
+    customerAddress: Joi.string().min(5).max(255).required(),
+    customerEmail: Joi.string().email().optional().allow(null, ''),
+    customerDepartment: Joi.string().min(2).max(100).required(),
+    customerCity: Joi.string().min(2).max(100).required(),
+    deliveryMethod: Joi.string().valid('recoge_bodega', 'envio_nacional', 'domicilio_ciudad').optional(),
+    paymentMethod: Joi.string().valid('efectivo', 'transferencia', 'tarjeta_credito', 'pago_electronico', 'publicidad', 'reposicion').optional(),
+    items: Joi.array().items(
+      Joi.object({
+        name: Joi.string().min(1).max(100).required(),
+        quantity: Joi.number().integer().min(1).required(),
+        price: Joi.alternatives().try(
+          Joi.number().positive(),
+          Joi.string().pattern(/^\d+(\.\d+)?$/).custom((value) => parseFloat(value))
+        ).required(),
+        description: Joi.string().max(255).optional().allow(null, '')
+      })
+    ).min(1).required(),
+    notes: Joi.string().max(2000).optional().allow(null, ''),
+    deliveryDate: Joi.date().optional().allow(null, ''),
+    totalAmount: Joi.number().positive().optional()
+  }),
+
+  // Validación para actualizar pedido
+  updateOrder: Joi.object({
+    customerName: Joi.string().min(2).max(100).optional(),
+    customerPhone: Joi.string().pattern(/^[0-9+\-\s()]+$/).optional(),
+    customerAddress: Joi.string().min(5).max(255).optional(),
+    customerEmail: Joi.string().email().optional(),
+    status: Joi.string().valid(
+      'pendiente_facturacion',
+      'revision_cartera',
+      'en_logistica',
+      'en_preparacion',
+      'listo',
+      'en_reparto',
+      'entregado_transportadora',
+      'entregado_cliente',
+      'cancelado',
+      // Estados legacy para compatibilidad
+      'pendiente',
+      'confirmado',
+      'enviado',
+      'confirmado',
+      'enviado',
+      'entregado',
+      'en_empaque'
+    ).optional(),
+    is_service: Joi.boolean().optional(),
+    delivery_method: Joi.string().valid('recoge_bodega', 'recogida_tienda', 'envio_nacional', 'domicilio_ciudad', 'domicilio_nacional', 'envio_internacional', 'envio_especial', 'drone_delivery', 'fast', 'domicilio', 'nacional', 'mensajeria_urbana').optional().allow('', null),
+    // Aceptar también 'credito' (normalizado en frontend) para evitar 400
+    payment_method: Joi.string().valid('efectivo', 'transferencia', 'cliente_credito', 'credito', 'pago_electronico', 'contraentrega', 'publicidad', 'reposicion').optional(),
+    // Campos adicionales para Facturación cuando se marca "Pago Electrónico"
+    electronic_payment_type: Joi.string().valid('bold', 'mercadopago', 'otro').optional().allow('', null),
+    electronic_payment_notes: Joi.string().max(255).optional().allow('', null),
+    // shipping_payment_method es opcional y solo se valida si no es recogida en tienda
+    shipping_payment_method: Joi.string().valid('contado', 'contraentrega').optional().when('delivery_method', {
+      is: 'recogida_tienda',
+      then: Joi.forbidden(),
+      otherwise: Joi.optional()
+    }),
+    items: Joi.array().items(
+      Joi.object({
+        name: Joi.string().min(1).max(100).required(),
+        quantity: Joi.number().integer().min(1).required(),
+        price: Joi.number().positive().required(),
+        description: Joi.string().max(255).optional()
+      })
+    ).optional(),
+    notes: Joi.string().max(2000).optional().allow(''),
+    deliveryDate: Joi.date().optional().allow(null),
+    shipping_date: Joi.date().optional().allow(null),
+    delivery_fee_exempt: Joi.boolean().optional(),
+    delivery_fee: Joi.number().min(0).optional()
+  }),
+
+  // Validación para entregas agregadas de efectivo del mensajero
+  createCashDelivery: Joi.object({
+    amount: Joi.number().positive().required(),
+    deliveredTo: Joi.number().integer().positive().required(),
+    referenceNumber: Joi.string().max(80).optional().allow('', null),
+    notes: Joi.string().max(500).optional().allow('', null)
+  }),
+
+  // Validación para resetear contraseña
+  resetPassword: Joi.object({
+    newPassword: Joi.string().min(6).required()
+  }),
+
+  // Validación para cambiar contraseña personalizada
+  changePassword: Joi.object({
+    password: Joi.string().min(6).required()
+  }),
+
+  // Validación para configuración de empresa
+  companyConfig: Joi.object({
+    name: Joi.string().min(2).max(100).optional(),
+    logoUrl: Joi.string().uri().optional().allow(''),
+    primaryColor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).optional(),
+    secondaryColor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).optional(),
+    address: Joi.string().max(255).optional(),
+    phone: Joi.string().pattern(/^[0-9+\-\s()]+$/).optional(),
+    email: Joi.string().email().optional()
+  })
+};
+
+// Middleware de validación genérico
+const validate = (schema) => {
+  return (req, res, next) => {
+    console.log('🔍 VALIDACIÓN - Datos recibidos:', JSON.stringify(req.body, null, 2));
+    const { error, value } = schema.validate(req.body, {
+      abortEarly: false,
+      stripUnknown: true
+    });
+
+    if (error) {
+      console.log('❌ ERROR DE VALIDACIÓN:', error.details);
+
+      const errors = error.details.map(detail => ({
+        field: detail.path.join('.'),
+        message: detail.message
+      }));
+
+      console.log('📋 Errores formateados:', errors);
+
+      const fs = require('fs');
+      try {
+        fs.writeFileSync('validation_error.log', JSON.stringify({ body: req.body, errors }, null, 2));
+      } catch (e) { }
+
+      return res.status(400).json({
+        success: false,
+        message: 'Datos de entrada inválidos',
+        errors
+      });
+    }
+
+    console.log('✅ VALIDACIÓN EXITOSA - Datos validados:', JSON.stringify(value, null, 2));
+    // Logs adicionales para detectar campos removidos por stripUnknown y confirmar presencia de electronic_payment_type
+    try {
+      const originalKeys = Object.keys(req.body || {});
+      const validatedKeys = Object.keys(value || {});
+      const removedKeys = originalKeys.filter(k => !validatedKeys.includes(k));
+      if (removedKeys.length) {
+        console.log('🧹 VALIDACIÓN - Campos eliminados por stripUnknown:', removedKeys);
+      }
+      console.log('✅ VALIDACIÓN - Campos permitidos:', validatedKeys);
+      if (validatedKeys.includes('electronic_payment_type')) {
+        console.log('✅ VALIDACIÓN - electronic_payment_type:', value.electronic_payment_type);
+      } else if (originalKeys.includes('electronic_payment_type')) {
+        console.log('⚠️ VALIDACIÓN - electronic_payment_type fue eliminado por el esquema.');
+      }
+
+      // Persistir auditoría a archivo cuando sea PUT /orders/:id
+      if (req?.method === 'PUT' && req?.params?.id && String(req.originalUrl || '').includes('/orders')) {
+        try {
+          logOrderUpdateEvent({
+            orderId: Number(req.params.id),
+            event: 'validation',
+            userId: req.user?.id || null,
+            userRole: req.user?.role || null,
+            data: {
+              originalKeys,
+              validatedKeys,
+              removedKeys,
+              validated: value
+            }
+          });
+        } catch (e2) { }
+      }
+    } catch (e) { }
+    req.validatedData = value;
+    next();
+  };
+};
+
+// Middleware para validar parámetros de URL
+const validateParams = (schema) => {
+  return (req, res, next) => {
+    const { error, value } = schema.validate(req.params);
+
+    if (error) {
+      return res.status(400).json({
+        success: false,
+        message: 'Parámetros inválidos',
+        error: error.details[0].message
+      });
+    }
+
+    req.validatedParams = value;
+    next();
+  };
+};
+
+// Esquemas para parámetros comunes
+const paramSchemas = {
+  id: Joi.object({
+    id: Joi.number().integer().positive().required()
+  })
+};
+
+module.exports = {
+  validate,
+  validateParams,
+  schemas,
+  paramSchemas
+};

@@ -1,0 +1,696 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { format } from 'date-fns';
+import { treasuryAdminService, financialService, movementService } from '../services/api';
+import * as Icons from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useAuth } from '../context/AuthContext';
+import { Button, Modal, ModalHeader, ModalBody, ModalFooter, Form, FormGroup, Label, Input } from 'reactstrap';
+
+// Componente para mostrar evidencia (imagen o PDF) con diagnóstico
+const EvidenceViewer = ({ file, depositId, onUploadSuccess }) => {
+  const [imgError, setImgError] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const { isAdmin } = useAuth();
+
+  const handleFileChange = async (e) => {
+    const selectedFile = e.target.files[0];
+    if (!selectedFile) return;
+
+    if (!depositId) {
+      toast.error('No hay ID de depósito para subir evidencia');
+      return;
+    }
+
+    try {
+      setUploading(true);
+      await treasuryAdminService.uploadDepositEvidence(depositId, selectedFile);
+      toast.success('Evidencia subida correctamente');
+      if (onUploadSuccess) onUploadSuccess();
+    } catch (error) {
+      console.error(error);
+      toast.error('Error subiendo evidencia');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  try {
+    const f = String(file || '').trim();
+
+    // Si no hay archivo, mostrar input para subir (SOLO ADMIN)
+    if (!f) {
+      return (
+        <div className="text-sm text-gray-500 border border-dashed border-gray-300 rounded p-4 text-center">
+          <p className="mb-2">Sin evidencia adjunta</p>
+          {isAdmin() && (
+            <label className={`cursor-pointer inline-flex items-center px-3 py-1.5 bg-blue-50 text-blue-700 rounded text-xs font-medium hover:bg-blue-100 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+              <Icons.Upload className="w-3 h-3 mr-1" />
+              {uploading ? 'Subiendo...' : 'Subir evidencia'}
+              <input
+                type="file"
+                className="hidden"
+                accept="image/*,application/pdf"
+                onChange={handleFileChange}
+                disabled={uploading}
+              />
+            </label>
+          )}
+        </div>
+      );
+    }
+
+    const src = `/uploads/deposits/${encodeURIComponent(f)}`;
+    const isPdf = f.toLowerCase().endsWith('.pdf');
+    return (
+      <div>
+        {isPdf ? (
+          <iframe
+            src={src}
+            title="Evidencia consignación"
+            className="w-full h-[420px] border rounded"
+          />
+        ) : imgError ? (
+          <div className="text-sm text-red-600">
+            No se pudo cargar la imagen.
+            {' '}
+            <a className="underline" href={src} target="_blank" rel="noopener noreferrer">Abrir</a>
+          </div>
+        ) : (
+          <img
+            src={src}
+            alt="Evidencia de consignación"
+            className="max-h-[420px] w-full object-contain rounded border bg-white"
+            onError={() => setImgError(true)}
+          />
+        )}
+        <div className="mt-2 flex items-center justify-between text-xs">
+          <a
+            className="text-blue-600 hover:text-blue-800 underline"
+            href={src}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Abrir en pestaña nueva
+          </a>
+
+          {isAdmin() && (
+            <label className={`cursor-pointer text-gray-500 hover:text-gray-700 underline ml-4 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+              {uploading ? 'Actualizando...' : 'Cambiar archivo'}
+              <input
+                type="file"
+                className="hidden"
+                accept="image/*,application/pdf"
+                onChange={handleFileChange}
+                disabled={uploading}
+              />
+            </label>
+          )}
+        </div>
+      </div>
+    );
+  } catch {
+    return <div className="text-sm text-gray-500">Error visualizando evidencia</div>;
+  }
+};
+
+const DepositExpansionRow = ({ d, details, onRefresh }) => {
+  const items = details?.items || [];
+  const totals = details?.totals || {};
+  const file = (details?.header?.evidence_file || d?.evidence_file) || '';
+  return (
+    <tr className="bg-white">
+      <td className="px-4 py-3" colSpan={10}>
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+          <div className="md:col-span-8">
+            {items.length === 0 && <div className="text-sm text-gray-500">Sin facturas relacionadas</div>}
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-gray-500 uppercase text-[10px]">
+                  <th className="px-2 py-1 text-left">Factura</th>
+                  <th className="px-2 py-1 text-left">Cliente</th>
+                  <th className="px-2 py-1 text-left">Fecha</th>
+                  <th className="px-2 py-1 text-right">Asignado</th>
+                  <th className="px-2 py-1 text-left">Acción</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {items.map((it) => (
+                  <tr key={it.order_id}>
+                    <td className="px-2 py-1 font-medium">{it.order_number}</td>
+                    <td className="px-2 py-1 text-gray-700 truncate max-w-[420px]">{it.customer_name || '-'}</td>
+                    <td className="px-2 py-1 text-gray-500">{it.invoice_date ? format(new Date(it.invoice_date), 'dd/MM/yyyy') : '-'}</td>
+                    <td className="px-2 py-1 text-right">
+                      {Number(it.assigned_amount || 0).toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                    </td>
+                    <td className="px-2 py-1">
+                      <a
+                        href={`/orders/${it.order_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-blue-600 hover:text-blue-800 underline"
+                      >
+                        Ver detalle
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-3 border-t pt-2 text-xs">
+              <div className="flex justify-between">
+                <span>Asignado:</span>
+                <span className="font-semibold">
+                  {Number(totals.assigned_total || 0).toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>Consignación:</span>
+                <span className="font-semibold">
+                  {Number(totals.deposit_amount || 0).toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                </span>
+              </div>
+              <div className={`flex justify-between ${Number(totals.difference || 0) <= Number(totals.tolerance || 0) ? 'text-green-700' : 'text-red-700'}`}>
+                <span>Diferencia:</span>
+                <span className="font-semibold">
+                  {Number(totals.difference || 0).toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 md:mt-0 md:col-span-4">
+            <div className="text-xs text-gray-500 mb-1">Evidencia</div>
+            <EvidenceViewer file={file} depositId={d.id} onUploadSuccess={onRefresh} />
+          </div>
+        </div>
+      </td>
+    </tr>
+  );
+};
+
+const TreasuryAuditPage = () => {
+  const [tab, setTab] = useState('deposits'); // 'deposits' | 'base'
+  const [filters, setFilters] = useState({ from: '', to: '' });
+  const [loading, setLoading] = useState(false);
+  const [deposits, setDeposits] = useState([]);
+  const [baseChanges, setBaseChanges] = useState([]);
+  const [movements, setMovements] = useState([]);
+  const [openDepositId, setOpenDepositId] = useState(null);
+  const [depositDetailsMap, setDepositDetailsMap] = useState({});
+  const [loadingDetailsId, setLoadingDetailsId] = useState(null);
+
+  const [updatingSiigoId, setUpdatingSiigoId] = useState(null);
+  const { isAdmin } = useAuth();
+
+  // Financial Snapshot Manual Input Logic
+  const [finModalOpen, setFinModalOpen] = useState(false);
+  const [finInputValues, setFinInputValues] = useState({
+    bank_balance: 0,
+    receivables: 0,
+    payables: 0,
+    notes: ''
+  });
+
+  const toggleFinModal = () => setFinModalOpen(!finModalOpen);
+
+  const handleFinInputChange = (e) => {
+    const { name, value } = e.target;
+    setFinInputValues(prev => ({ ...prev, [name]: value }));
+  };
+
+  const openFinancialModal = async () => {
+    try {
+      const response = await financialService.getEquityHistory(); // Get latest to pre-fill
+      if (response.success && response.data.length > 0) {
+        const latest = response.data[response.data.length - 1];
+        if (latest) {
+          setFinInputValues({
+            bank_balance: latest.bank_balance || 0,
+            receivables: latest.receivables || 0,
+            payables: latest.payables || 0,
+            notes: latest.notes || ''
+          });
+        }
+      }
+      setFinModalOpen(true);
+    } catch (error) {
+      toast.error('Error cargando datos financieros previos');
+      setFinModalOpen(true); // Open anyway with 0s
+    }
+  };
+
+  const handleSaveFinSnapshot = async () => {
+    try {
+      await financialService.saveSnapshot(finInputValues);
+      toast.success('Datos financieros del día actualizados correctamente');
+      toggleFinModal();
+    } catch (error) {
+      toast.error('Error guardando datos financieros');
+      console.error(error);
+    }
+  };
+
+  const fmt = (n) => Number(n || 0).toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 });
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const params = {};
+      if (filters.from) params.from = filters.from;
+      if (filters.to) params.to = filters.to;
+
+      if (tab === 'deposits') {
+        const res = await treasuryAdminService.getDepositsAudit(params);
+        setDeposits(res?.data || []);
+      } else if (tab === 'movements') {
+        const res = await movementService.list(params);
+        setMovements(res?.data || []);
+      } else {
+        const res = await treasuryAdminService.getBaseChanges(params);
+        setBaseChanges(res?.data || []);
+      }
+    } catch (e) {
+      // mensaje centralizado por interceptor
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, filters.from, filters.to]);
+
+  const depositTotals = useMemo(() => {
+    const total = deposits.reduce((acc, d) => acc + Number(d.amount || 0), 0);
+    return { total };
+  }, [deposits]);
+
+  const toggleDepositDropdown = async (id) => {
+    if (openDepositId === id) {
+      setOpenDepositId(null);
+      return;
+    }
+    setOpenDepositId(id);
+    if (!depositDetailsMap[id]) {
+      setLoadingDetailsId(id);
+      try {
+        const res = await treasuryAdminService.getDepositDetails(id);
+        const data = res?.data || res;
+        setDepositDetailsMap(prev => ({ ...prev, [id]: data }));
+      } catch (e) {
+        // manejar por interceptor
+      } finally {
+        setLoadingDetailsId(null);
+      }
+    }
+  };
+
+  const handleSetSiigoClosed = async (deposit, closed = true) => {
+    if (!deposit?.id) return;
+    setUpdatingSiigoId(deposit.id);
+    try {
+      const res = await treasuryAdminService.setDepositSiigoClosed(deposit.id, closed);
+      const updated = res?.data || res;
+      setDeposits(prev => prev.map(d => d.id === deposit.id ? { ...d, ...(updated || {}), siigo_closed: closed } : d));
+      toast.success(closed ? 'Marcado como cerrado en Siigo' : 'Marcado como pendiente en Siigo');
+    } catch (e) {
+      // manejar por interceptor
+    } finally {
+      setUpdatingSiigoId(null);
+    }
+  };
+
+  const handleApproveMovement = async (id) => {
+    if (!window.confirm('¿Está seguro de aprobar este movimiento? Esto afectará el balance de cartera inmediatamente.')) return;
+    try {
+      setLoading(true);
+      await movementService.approve(id);
+      toast.success('Movimiento aprobado correctamente');
+      loadData();
+    } catch (e) {
+      console.error(e);
+      toast.error('Error al aprobar movimiento');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteMovement = async (id) => {
+    if (!window.confirm('¿Está seguro de eliminar este movimiento? Esta acción no se puede deshacer.')) return;
+    try {
+      setLoading(true);
+      await movementService.delete(id);
+      toast.success('Movimiento eliminado correctamente');
+      loadData();
+    } catch (e) {
+      console.error(e);
+      toast.error('Error al eliminar movimiento');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="p-6">
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Auditoría de Cartera</h1>
+          <p className="text-gray-600 mt-1">Historial de consignaciones y cambios de base</p>
+        </div>
+        <div className="flex space-x-2">
+          <button onClick={openFinancialModal} className="btn btn-primary flex items-center">
+            <Icons.DollarSign className="w-4 h-4 mr-2" />
+            Ingresar Saldos Financieros
+          </button>
+          <button onClick={loadData} className="btn btn-secondary" title="Actualizar">
+            <Icons.RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+      </div>
+
+      {/* Financial Snapshot Modal */}
+      <Modal isOpen={finModalOpen} toggle={toggleFinModal}>
+        <ModalHeader toggle={toggleFinModal}>Ingresar Saldos Financieros del Día</ModalHeader>
+        <ModalBody>
+          <Form>
+            <FormGroup>
+              <Label for="bank_balance">Saldo en Bancos</Label>
+              <Input
+                type="number"
+                name="bank_balance"
+                id="bank_balance"
+                value={finInputValues.bank_balance}
+                onChange={handleFinInputChange}
+              />
+            </FormGroup>
+            <FormGroup>
+              <Label for="receivables">Cuentas por Cobrar (Cartera)</Label>
+              <Input
+                type="number"
+                name="receivables"
+                id="receivables"
+                value={finInputValues.receivables}
+                onChange={handleFinInputChange}
+              />
+            </FormGroup>
+            <FormGroup>
+              <Label for="payables">Cuentas por Pagar (Proveedores)</Label>
+              <Input
+                type="number"
+                name="payables"
+                id="payables"
+                value={finInputValues.payables}
+                onChange={handleFinInputChange}
+              />
+            </FormGroup>
+            <FormGroup>
+              <Label for="notes">Notas / Observaciones</Label>
+              <Input
+                type="textarea"
+                name="notes"
+                id="notes"
+                value={finInputValues.notes}
+                onChange={handleFinInputChange}
+              />
+            </FormGroup>
+          </Form>
+        </ModalBody>
+        <ModalFooter>
+          <Button color="primary" onClick={handleSaveFinSnapshot}>Guardar</Button>{' '}
+          <Button color="secondary" onClick={toggleFinModal}>Cancelar</Button>
+        </ModalFooter>
+      </Modal>
+
+      {/* Tabs */}
+      <div className="border-b border-gray-200 mb-4">
+        <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+          <button
+            onClick={() => setTab('deposits')}
+            className={`${tab === 'deposits' ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+          >
+            Consignaciones
+          </button>
+          <button
+            onClick={() => setTab('base')}
+            className={`${tab === 'base' ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+          >
+            Cambios de Base
+          </button>
+          <button
+            onClick={() => setTab('movements')}
+            className={`${tab === 'movements' ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+          >
+            Ingresos Extra / Retiros
+          </button>
+        </nav>
+      </div>
+
+      {/* Filtros */}
+      <div className="card mb-6">
+        <div className="card-content grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Desde</label>
+            <input type="date" value={filters.from} onChange={(e) => setFilters(f => ({ ...f, from: e.target.value }))} className="w-full px-3 py-2 border rounded" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Hasta</label>
+            <input type="date" value={filters.to} onChange={(e) => setFilters(f => ({ ...f, to: e.target.value }))} className="w-full px-3 py-2 border rounded" />
+          </div>
+          {tab === 'deposits' && (
+            <div className="flex items-end">
+              <div className="p-3 bg-gray-50 border rounded w-full">
+                <div className="text-xs text-gray-500">Resumen</div>
+                <div className="flex items-center justify-between text-sm">
+                  <span>Total consignado:</span>
+                  <span className="font-semibold">{fmt(depositTotals.total)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Tab content */}
+      {tab === 'deposits' ? (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="text-lg font-semibold text-gray-900 flex items-center">
+              <Icons.Banknote className="w-5 h-5 mr-2 text-emerald-600" />
+              Auditoría de Consignaciones
+            </h2>
+          </div>
+          <div className="card-content p-0">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Fecha consignación</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Banco</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Referencia</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Motivo</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Detalle</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Notas</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Facturas</th>
+
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Registrado por</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Siigo</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {deposits.map((d) => (
+                    <React.Fragment key={d.id}>
+                      <tr className={`${d.siigo_closed ? 'bg-emerald-50 hover:bg-emerald-100' : 'hover:bg-gray-50'}`}>
+                        <td className="px-4 py-2 text-sm">{d.deposited_at ? format(new Date(d.deposited_at), 'dd/MM/yyyy hh:mm a') : '-'}</td>
+                        <td className="px-4 py-2 text-right text-sm font-semibold">{fmt(d.amount)}</td>
+                        <td className="px-4 py-2 text-sm">{d.bank_name || '-'}</td>
+                        <td className="px-4 py-2 text-sm">{d.reference_number || '-'}</td>
+                        <td className="px-4 py-2 text-sm">{d.reason_code || '-'}</td>
+                        <td className="px-4 py-2 text-sm">{d.reason_text || '-'}</td>
+                        <td className="px-4 py-2 text-sm">{d.notes || '-'}</td>
+                        <td className="px-4 py-2 text-sm">
+                          <button
+                            onClick={() => toggleDepositDropdown(d.id)}
+                            className="text-blue-600 hover:text-blue-800 underline text-sm"
+                            title="Ver facturas relacionadas"
+                          >
+                            Ver facturas
+                          </button>
+                        </td>
+                        <td className="px-4 py-2 text-sm">{d.deposited_by ? `ID ${d.deposited_by}` : '-'}</td>
+                        <td className="px-4 py-2 text-sm">
+                          {d.siigo_closed ? (
+                            <div className="flex items-center space-x-2">
+                              <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-emerald-700 bg-emerald-100 rounded">
+                                Cerrado
+                              </span>
+                              <button
+                                onClick={() => handleSetSiigoClosed(d, false)}
+                                disabled={updatingSiigoId === d.id}
+                                className="text-xs text-gray-500 underline hover:text-gray-700 disabled:opacity-60"
+                                title="Desmarcar cierre en Siigo"
+                              >
+                                {updatingSiigoId === d.id ? '...' : 'Desmarcar'}
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => handleSetSiigoClosed(d, true)}
+                              disabled={updatingSiigoId === d.id}
+                              className="px-2 py-1 text-xs rounded bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-60"
+                              title="Marcar consignación como cerrada en Siigo"
+                            >
+                              {updatingSiigoId === d.id ? 'Guardando...' : 'Pendiente por cerrar en Siigo'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                      {openDepositId === d.id && (
+                        loadingDetailsId === d.id
+                          ? (
+                            <tr className="bg-white">
+                              <td className="px-4 py-3" colSpan={10}>
+                                <div className="text-sm text-gray-500">Cargando...</div>
+                              </td>
+                            </tr>
+                          )
+                          : <DepositExpansionRow d={d} details={depositDetailsMap[d.id]} onRefresh={loadData} />
+                      )}
+                    </React.Fragment>
+                  ))}
+                  {deposits.length === 0 && (
+                    <tr>
+                      <td className="px-4 py-6 text-center text-sm text-gray-500" colSpan={10}>Sin registros</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : tab === 'movements' ? (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="text-lg font-semibold text-gray-900 flex items-center">
+              <Icons.ArrowUpDown className="w-5 h-5 mr-2 text-emerald-600" />
+              Auditoría de Movimientos (Ingresos/Retiros)
+            </h2>
+          </div>
+          <div className="card-content p-0">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tipo</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Pedido</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Notas</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {movements.map((m) => (
+                    <tr key={m.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-2 text-sm whitespace-nowrap">
+                        {m.created_at ? format(new Date(m.created_at), 'dd/MM/yyyy hh:mm a') : '-'}
+                      </td>
+                      <td className="px-4 py-2 text-sm">
+                        <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-medium uppercase ${m.type === 'extra_income' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'}`}>
+                          {m.type === 'extra_income' ? 'Ingreso Extra' : 'Retiro'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-right text-sm font-semibold">{fmt(m.amount)}</td>
+                      <td className="px-4 py-2 text-sm">
+                        {m.order_number ? (
+                          <a href={`/orders/${m.order_id}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                            {m.order_number}
+                          </a>
+                        ) : '-'}
+                      </td>
+                      <td className="px-4 py-2 text-sm">
+                        <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-medium uppercase ${m.approval_status === 'approved' ? 'bg-green-100 text-green-700' : m.approval_status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                          {m.approval_status === 'approved' ? 'Aprobado' : m.approval_status === 'rejected' ? 'Rechazado' : 'Pendiente'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-sm max-w-[200px] truncate" title={m.reason_text || m.notes}>{m.reason_text || m.notes || '-'}</td>
+                      <td className="px-4 py-2 text-right text-sm">
+                        <div className="flex items-center justify-end space-x-2">
+                          {m.approval_status === 'pending' && isAdmin() && (
+                            <button
+                              onClick={() => handleApproveMovement(m.id)}
+                              className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] items-center"
+                            >
+                              <Icons.Check className="w-3 h-3 inline mr-1" />
+                              Aprobar
+                            </button>
+                          )}
+                          {isAdmin() && (
+                            <button
+                              onClick={() => handleDeleteMovement(m.id)}
+                              className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] items-center"
+                              title="Eliminar movimiento"
+                            >
+                              <Icons.Trash2 className="w-3 h-3 inline mr-1" />
+                              Eliminar
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {movements.length === 0 && (
+                    <tr>
+                      <td className="px-4 py-6 text-center text-sm text-gray-500" colSpan={7}>Sin movimientos registrados</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="text-lg font-semibold text-gray-900 flex items-center">
+              <Icons.Settings className="w-5 h-5 mr-2 text-emerald-600" />
+              Cambios de Base
+            </h2>
+          </div>
+          <div className="card-content p-0">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Base anterior</th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Base nueva</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Usuario</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {baseChanges.map((r) => (
+                    <tr key={r.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-2 text-sm">{r.created_at ? format(new Date(r.created_at), 'dd/MM/yyyy hh:mm a') : '-'}</td>
+                      <td className="px-4 py-2 text-right text-sm">{fmt(r.previous_base)}</td>
+                      <td className="px-4 py-2 text-right text-sm font-semibold">{fmt(r.new_base)}</td>
+                      <td className="px-4 py-2 text-sm">{r.changed_by ? `ID ${r.changed_by}` : '-'}</td>
+                    </tr>
+                  ))}
+                  {baseChanges.length === 0 && (
+                    <tr>
+                      <td className="px-4 py-6 text-center text-sm text-gray-500" colSpan={4}>Sin registros</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default TreasuryAuditPage;
